@@ -1,0 +1,168 @@
+.ml-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.ml-kpi {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+}
+
+.ml-kpi-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ml-kpi-val {
+  font-size: 1.6rem;
+  font-weight: 800;
+  font-family: 'Outfit', sans-serif;
+  line-height: 1;
+}
+
+.ml-kpi-lbl {
+  font-size: 0.75rem;
+  color: #6b7280;
+  margin-top: 3px;
+}
+
+.model-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-tag-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #2563eb;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.accuracy-chip {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #16a34a;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ml-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 16px;
+}
+
+.chart-panel, .dist-panel {
+  padding: 20px;
+}
+
+.panel-h {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #374151;
+  margin-bottom: 16px;
+}
+
+.panel-h-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.pred-note { font-size: 0.72rem; color: #9ca3af; }
+
+.dist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dist-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 4px 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  align-items: center;
+}
+
+.dist-label { font-size: 0.8rem; font-weight: 600; grid-column: 1; }
+.dist-count { font-size: 1.4rem; font-weight: 800; font-family: 'Outfit', sans-serif; grid-column: 2; grid-row: 1 / 3; text-align: right; }
+.dist-bar-bg { grid-column: 1; height: 5px; background: rgba(0,0,0,0.08); border-radius: 3px; overflow: hidden; }
+.dist-bar-fill { height: 100%; border-radius: 3px; }
+.dist-pct { grid-column: 1; font-size: 0.72rem; }
+
+/* Gauge */
+.gauge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.gauge-num { font-size: 0.9rem; font-weight: 800; font-family: 'Outfit', sans-serif; }
+.gauge-lbl { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* Predictions table */
+.pred-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+
+.pred-table thead tr {
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.pred-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.pred-table td { padding: 11px 14px; vertical-align: middle; }
+.trow { border-bottom: 1px solid #f3f4f6; transition: background 0.12s; }
+.trow:hover { background: #f9fafb; }
+
+.proj-id { font-family: monospace; color: var(--primary); font-weight: 600; font-size: 0.8rem; }
+.proj-name { font-weight: 500; max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sector-chip { background: #f3f0ff; border: 1px solid #ddd6fe; color: #7c3aed; padding: 2px 7px; border-radius: 5px; font-size: 0.72rem; }
+
+.prob-bar-wrap { display: flex; align-items: center; gap: 7px; min-width: 100px; }
+.prob-bar-bg { flex: 1; height: 6px; background: #f3f4f6; border-radius: 3px; overflow: hidden; }
+
+.row-skel { height: 40px; border-radius: 6px; background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%); background-size: 200% 100%; animation: shimmer 1.4s infinite; margin: 4px 0; }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+.table-wrap { overflow-x: auto; }
+
+@media (max-width: 1200px) {
+  .ml-kpi-row { grid-template-columns: 1fr 1fr; }
+  .ml-grid { grid-template-columns: 1fr; }
+}

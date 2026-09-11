@@ -1,0 +1,142 @@
+.project-table-panel {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.view-all-btn {
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: var(--primary);
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+  font-family: var(--font-sans);
+}
+.view-all-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.table-container {
+  overflow-x: auto;
+}
+
+.project-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.project-table thead tr {
+  border-bottom: 1px solid var(--border);
+  background: #f9fafb;
+}
+
+.project-table th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.table-row {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+
+.table-row:hover {
+  background: #f9fafb;
+}
+
+.project-table td {
+  padding: 12px 14px;
+  vertical-align: middle;
+}
+
+.project-id {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--primary);
+}
+
+.project-name-cell {
+  font-weight: 500;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sector-tag {
+  background: #f3f0ff;
+  border: 1px solid #ddd6fe;
+  color: #7c3aed;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.cost-cell {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.overrun-cell { color: var(--warning); font-weight: 600; }
+.overrun-cell.high-overrun { color: var(--danger); }
+
+.risk-bar-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.risk-bar-bg {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.risk-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 1s ease;
+}
+
+.risk-score-label {
+  font-weight: 700;
+  font-size: 0.8rem;
+  width: 28px;
+  text-align: right;
+}
+
+.row-skeleton {
+  height: 48px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: linear-gradient(90deg, #f3f4f6 0%, #e5e7eb 50%, #f3f4f6 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
+.table-skeleton {
+  padding: 8px 0;
+}

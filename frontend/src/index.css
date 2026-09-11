@@ -1,0 +1,207 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap');
+
+:root {
+  --bg-page: #f4f6f9;
+  --bg-card: #ffffff;
+  --bg-card-hover: #fafbfc;
+  --text-primary: #1a202c;
+  --text-secondary: #4a5568;
+  --text-muted: #718096;
+  
+  /* Indian Government Official Colors */
+  --gov-navy-dark: #0a2540;
+  --gov-navy: #0a3871;
+  --gov-blue: #13589b;
+  --gov-blue-light: #ebf3fb;
+  --gov-saffron: #e65100;
+  --gov-saffron-light: #fff7ed;
+  --gov-saffron-border: #fed7aa;
+  --gov-green: #138808;
+  --gov-green-light: #f0fdf4;
+  --gov-green-border: #bbf7d0;
+  --gov-ashoka: #000080;
+  --gov-gold: #b45309;
+  
+  --primary: #0a3871;
+  --primary-light: #ebf3fb;
+  --success: #138808;
+  --success-light: #f0fdf4;
+  --warning: #b45309;
+  --warning-light: #fffbeb;
+  --danger: #c53030;
+  --danger-light: #fff5f5;
+  
+  --border: #d0d7de;
+  --border-subtle: #e2e8f0;
+  --border-strong: #94a3b8;
+  
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  
+  --font-sans: 'Inter', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-hindi: 'Noto Sans Devanagari', 'Inter', sans-serif;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 3px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] {
+  --bg-page: #000000;
+  --bg-card: #111113;
+  --bg-card-hover: #1a1a1e;
+  --text-primary: #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  
+  --gov-navy-dark: #ffffff;
+  --gov-navy: #38bdf8;
+  --gov-blue: #38bdf8;
+  --gov-blue-light: #18181b;
+  --gov-saffron: #fb923c;
+  --gov-saffron-light: #241407;
+  --gov-saffron-border: #622709;
+  --gov-green: #4ade80;
+  --gov-green-light: #062211;
+  --gov-green-border: #134e27;
+  --gov-ashoka: #38bdf8;
+  
+  --primary: #38bdf8;
+  --primary-light: #18181b;
+  --success: #4ade80;
+  --success-light: #064e3b;
+  --warning: #fbbf24;
+  --warning-light: #3f1b04;
+  --danger: #f87171;
+  --danger-light: #3f0909;
+  
+  --border: #27272a;
+  --border-subtle: #3f3f46;
+  --border-strong: #52525b;
+  
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.75);
+  --shadow-lg: 0 14px 28px rgba(0, 0, 0, 0.9);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  color: var(--gov-navy-dark);
+  letter-spacing: -0.01em;
+}
+
+a { color: var(--gov-blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.glass-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-panel:hover {
+  border-color: #cbd5e1;
+  box-shadow: var(--shadow-md);
+}
+
+.tricolor-strip {
+  height: 4px;
+  background: linear-gradient(90deg, #FF9933 0%, #FF9933 33.3%, #FFFFFF 33.3%, #FFFFFF 66.6%, #138808 66.6%, #138808 100%);
+  width: 100%;
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #0a3871, #13589b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #f1f5f9; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fadeIn 0.3s ease forwards; }
+
+/* Official Badges */
+.badge {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-success { background: var(--success-light); color: var(--success); border: 1px solid var(--gov-green-border); }
+.badge-warning { background: var(--warning-light); color: var(--warning); border: 1px solid #fde68a; }
+.badge-danger  { background: var(--danger-light);  color: var(--danger);  border: 1px solid #fecaca; }
+
+/* Government Emblem Container */
+.gov-emblem-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   True Black Dark Mode Global Overrides
+   ========================================================================== */
+[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #27272a;
+}
+
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+[data-theme="dark"] table thead tr {
+  background: #18181b !important;
+}
+
+[data-theme="dark"] .trow:hover {
+  background: #18181b !important;
+}
+
+[data-theme="dark"] .glass-panel {
+  background: var(--bg-card);
+  border-color: var(--border);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+}
+
+[data-theme="dark"] .glass-panel:hover {
+  border-color: #3f3f46;
+}
+

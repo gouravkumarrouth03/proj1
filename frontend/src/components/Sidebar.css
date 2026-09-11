@@ -1,0 +1,318 @@
+.sidebar {
+  width: 270px;
+  height: 100vh;
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-card);
+  z-index: 100;
+  box-shadow: 1px 0 8px rgba(0, 0, 0, 0.04);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.sidebar-header {
+  padding: 16px 18px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.emblem-box {
+  width: 38px;
+  height: 38px;
+  background: #0a3871;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  box-shadow: 0 2px 6px rgba(10, 56, 113, 0.25);
+  flex-shrink: 0;
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.gov-hindi {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #e65100;
+  line-height: 1.2;
+}
+
+.logo-text h2 {
+  font-size: 1.2rem;
+  font-weight: 800;
+  margin: 0;
+  color: #0a3871;
+  line-height: 1.2;
+}
+
+.gov-sub {
+  font-size: 0.68rem;
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.role-pill-card {
+  margin: 12px 14px 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.role-pill-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.role-pill-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.role-pill-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.role-pill-desc {
+  font-size: 0.68rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-group-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #94a3b8;
+  letter-spacing: 0.08em;
+  padding: 10px 8px 4px;
+  text-transform: uppercase;
+}
+
+.sidebar-nav {
+  flex: 1;
+  padding: 8px 12px;
+  overflow-y: auto;
+}
+
+.sidebar-nav ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.nav-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.nav-text-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-main-label {
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.nav-sub-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.nav-link:hover {
+  background: rgba(10, 56, 113, 0.07);
+  color: var(--gov-navy);
+}
+
+[data-theme="dark"] .nav-link:hover {
+  background: rgba(56, 189, 248, 0.08);
+  color: var(--primary);
+}
+
+.nav-link.active {
+  background: var(--gov-blue-light);
+  color: var(--gov-navy);
+  border-left: 3px solid var(--gov-navy);
+  font-weight: 700;
+}
+
+[data-theme="dark"] .nav-link.active {
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--primary);
+  border-left: 3px solid var(--primary);
+}
+
+.nav-link.active .nav-sub-label {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.sidebar-footer {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nic-badge-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  color: #15803d;
+  font-weight: 600;
+}
+
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.85rem;
+  border: 1px solid;
+  flex-shrink: 0;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.user-name {
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-role {
+  font-size: 0.68rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.btn-logout {
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.btn-logout:hover {
+  background: #fee2e2;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+
+/* Dark Mode Pure Black Overrides */
+[data-theme="dark"] .sidebar {
+  background: #000000;
+  border-right-color: #27272a;
+}
+
+[data-theme="dark"] .sidebar-header {
+  background: #000000;
+  border-bottom-color: #27272a;
+}
+
+[data-theme="dark"] .sidebar-footer {
+  background: #000000;
+  border-top-color: #27272a;
+}
+
+[data-theme="dark"] .nav-link:hover {
+  background: #18181b;
+  color: #38bdf8;
+}
+
+[data-theme="dark"] .nav-link.active {
+  background: #18181b;
+  color: #38bdf8;
+  border-left: 3px solid #38bdf8;
+}
+
+[data-theme="dark"] .nic-badge-bar {
+  background: #062211;
+  border-color: #134e27;
+  color: #4ade80;
+}
+
+[data-theme="dark"] .btn-logout {
+  border-color: #27272a;
+  color: #a1a1aa;
+}
+
+[data-theme="dark"] .btn-logout:hover {
+  background: #3f0909;
+  color: #f87171;
+  border-color: #7f1d1d;
+}
+
+
