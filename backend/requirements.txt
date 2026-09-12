@@ -1,4 +1,5 @@
 fastapi
+python-multipart
 uvicorn
 pydantic
 joblib
@@ -7,3 +8,4 @@ xgboost
 pandas
 numpy
 requests
+python-dotenv

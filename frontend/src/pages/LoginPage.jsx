@@ -26,9 +26,9 @@ const TRANSLATIONS = {
     langName: 'English',
     otherLangName: 'हिन्दी',
     govTitle: 'Government of India',
-    ministry: 'Ministry of Statistics & Programme Implementation',
-    division: 'Infrastructure & Project Monitoring Division (IPMD)',
-    systemHeading: 'National Project Monitoring & ML Risk Intelligence System',
+    ministry: 'LOGIC CORE Infrastructure Intelligence',
+    division: 'Infrastructure Monitoring & Intelligence Platform',
+    systemHeading: 'Infrastructure Monitoring & ML Risk Intelligence System',
     systemSub: 'Real-time predictive intelligence for central sector infrastructure projects (₹150 Cr and above).',
     mandateHeader: 'Mandate & Compliance',
     mandates: [
@@ -47,7 +47,7 @@ const TRANSLATIONS = {
     quickFillTitle: 'Admin-only default access:',
     adminLabel: 'Super Admin',
     adminDesc: 'Full rights to create, delete projects and manage users',
-    userLabel: 'Operations Officer',
+    userLabel: 'Viewers',
     userDesc: 'View project analytics and submit new project forecasts',
     nameLabel: 'Full Official Name',
     namePlaceholder: 'e.g. Administrator or Officer Name',
@@ -65,8 +65,8 @@ const TRANSLATIONS = {
     langName: 'हिन्दी',
     otherLangName: 'English',
     govTitle: 'भारत सरकार',
-    ministry: 'सांख्यिकी और कार्यक्रम कार्यान्वयन मंत्रालय',
-    division: 'अवसंरचना एवं परियोजना निगरानी प्रभाग (IPMD)',
+    ministry: 'लॉजिक कोर अवसंरचना इंटेलिजेंस',
+    division: 'अवसंरचना निगरानी एवं इंटेलिजेंस प्लेटफॉर्म',
     systemHeading: 'राष्ट्रीय परियोजना निगरानी एवं एआई जोखिम विश्लेषण पोर्टल',
     systemSub: 'केंद्रीय क्षेत्र की अवसंरचना परियोजनाओं (₹150 करोड़ व अधिक) के लिए वास्तविक समय विश्लेषिकी।',
     mandateHeader: 'उद्देश्य एवं सांविधिक अनुपालन',
@@ -115,6 +115,7 @@ export default function LoginPage() {
   const [selectedRole, setSelectedRole] = useState('admin');
   const [name, setName] = useState('Administrator');
   const [password, setPassword] = useState('');
+  const [affiliation, setAffiliation] = useState('Public');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -130,9 +131,9 @@ export default function LoginPage() {
     setError('');
     try {
       if (mode === 'register') {
-        await register(selectedRole, name.trim(), password);
+        await register(selectedRole, name.trim(), password, affiliation);
       } else {
-        await login(selectedRole, name.trim(), password);
+        await login(selectedRole, name.trim(), password, affiliation);
       }
     } catch (err) {
       setError(err.message || 'Authentication error.');
@@ -206,11 +207,11 @@ export default function LoginPage() {
 
           <div className="showcase-header">
             <div className="national-crest">
-              <span className="crest-symbol">🏛️</span>
+              <img className="logic-core-login-symbol" src="/logic-core-symbol.svg" alt="Logic Core" />
             </div>
             <div className="showcase-title-block">
               <span className="authority-tag">{t.govTitle}</span>
-              <h1 className="portal-brand-name">MoSPI <span className="highlight-text">IPMD</span></h1>
+              <h1 className="portal-brand-name">LOGIC <span className="highlight-text">CORE</span></h1>
               <p className="ministry-title">{t.ministry}</p>
               <p className="division-title">{t.division}</p>
             </div>
@@ -275,6 +276,7 @@ export default function LoginPage() {
             <div className="role-selector-grid">
               <div
                 className={`role-option-card ${selectedRole === 'admin' ? 'active' : ''}`}
+                style={mode === 'register' && (affiliation === 'Ministry of Central Govt' || affiliation === 'Ministry of State Govt') ? { opacity: 0.4, pointerEvents: 'none' } : {}}
                 onClick={() => handleRoleSelect('admin')}
               >
                 <div className="role-icon-box admin-icon-box">
@@ -289,7 +291,10 @@ export default function LoginPage() {
 
               <div
                 className={`role-option-card ${selectedRole === 'inspector' ? 'active' : ''}`}
-                style={selectedRole === 'inspector' ? { borderColor: '#fbbf24', background: '#fffbeb' } : {}}
+                style={{
+                  ...(selectedRole === 'inspector' ? { borderColor: '#fbbf24', background: '#fffbeb' } : {}),
+                  ...(mode === 'register' && (affiliation === 'Ministry of Central Govt' || affiliation === 'Ministry of State Govt') ? { opacity: 0.4, pointerEvents: 'none' } : {}),
+                }}
                 onClick={() => handleRoleSelect('inspector')}
               >
                 <div className="role-icon-box" style={{ background: '#fef3c7', color: '#92400e' }}>
@@ -366,6 +371,35 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
+
+              {selectedRole === 'user' && (
+                <div className="auth-field-group">
+                  <label className="auth-field-label">Viewer Category</label>
+                  <div className="auth-input-container" style={{ padding: '0 12px' }}>
+                    <select
+                      value={affiliation}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setAffiliation(val);
+                        if (val === 'Central Government' || val === 'State Government') {
+                          setSelectedRole('user');
+                        }
+                      }}
+                      className="auth-input"
+                      style={{ paddingLeft: 0, paddingRight: 0 }}
+                    >
+                      <option value="Public">Public</option>
+                      <option value="Central Government">Central Government</option>
+                      <option value="State Government">State Government</option>
+                    </select>
+                  </div>
+                  {(affiliation === 'Central Government' || affiliation === 'State Government') && (
+                    <p style={{ fontSize: '0.78rem', color: '#b45309', margin: '6px 0 0', lineHeight: 1.4 }}>
+                      Government Viewers can request Admin access from their Dashboard after login.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {error && (
                 <div className="auth-error-banner">

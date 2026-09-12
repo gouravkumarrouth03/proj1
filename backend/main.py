@@ -7,11 +7,24 @@ import os
 import random
 import sqlite3
 import logging
+import json
+import uuid
+import re
+import secrets
+import smtplib
+from email.message import EmailMessage
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # ── ML / Data imports ──────────────────────────────────────────────────────────
@@ -29,6 +42,8 @@ except ImportError:
 DEFAULT_DATABASE_PATH = Path(__file__).with_name("paimana.db")
 DATABASE_PATH = Path(os.getenv("MOSPI_DATABASE_PATH", str(DEFAULT_DATABASE_PATH))).expanduser()
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+COMMENT_UPLOADS_DIR = DATABASE_PATH.parent / "comment_uploads"
+COMMENT_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR = Path(__file__).parent.parent  # project root where .pkl files live
 
 COST_MODEL_PATH = MODELS_DIR / "xgboost_cost_overrun_model.pkl"
@@ -113,6 +128,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.mount("/comment-uploads", StaticFiles(directory=COMMENT_UPLOADS_DIR), name="comment-uploads")
 
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
@@ -120,24 +136,67 @@ class LoginInput(BaseModel):
     role: str
     name: str
     password: str
+    affiliation: Optional[str] = None
 
 
 class RegisterInput(BaseModel):
     name: str
     role: str
     password: str
+    email: Optional[str] = None
+    affiliation: str = "Public"
+
+
+class InviteOfficerInput(BaseModel):
+    name: str
+    email: str
+
+
+class SendOtpInput(BaseModel):
+    email: str
+
+
+class VerifyOtpInput(BaseModel):
+    email: str
+    otp: str
+
+
+class ChangePasswordInput(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AccessRequestResponse(BaseModel):
+    id: int
+    user_id: int
+    user_name: str
+    user_email: Optional[str]
+    affiliation: str
+    status: str
+    created_at: str
+    resolved_at: Optional[str] = None
+    resolved_by: Optional[int] = None
+
+
+OTP_STORE: dict[str, tuple[str, datetime]] = {}
+OTP_EXPIRY_MINUTES = 5
 
 
 class UserResponse(BaseModel):
     id: int
     name: str
     role: str
+    email: Optional[str] = None
+    must_change_password: bool = False
+    affiliation: str = "Public"
 
 
 class UserItem(BaseModel):
     id: int
     name: str
     role: str
+    email: Optional[str] = None
+    affiliation: str = "Public"
     created_at: Optional[str] = None
     last_seen_at: Optional[str] = None
     is_online: bool = False
@@ -152,6 +211,14 @@ class NotificationItem(BaseModel):
     alert_type: str
     created_at: str
     read_at: Optional[str] = None
+
+
+class ProjectComment(BaseModel):
+    id: int
+    project_id: str
+    comment: str
+    image_url: str
+    created_at: str
 
 
 class DatabaseStats(BaseModel):
@@ -193,6 +260,29 @@ class ProjectStat(BaseModel):
     last_inspected_at: Optional[str] = None
 
 
+class ProjectHistoryItem(BaseModel):
+    id: int
+    project_id: str
+    event_type: str
+    changed_fields: List[str]
+    snapshot: dict
+    actor_id: Optional[int] = None
+    actor_name: str
+    actor_role: str
+    recorded_at: str
+
+
+class DeletedProjectBackup(BaseModel):
+    id: int
+    project_id: str
+    project_name: str
+    snapshot: dict
+    deleted_at: str
+    expires_at: str
+    deleted_by: int
+    deleted_by_name: str
+
+
 class CreateProjectInput(BaseModel):
     name: str
     sector: str
@@ -221,6 +311,7 @@ class UpdateProjectStatusInput(BaseModel):
     revised_completion_date: Optional[str] = None
     inspection_notes: Optional[str] = None
     assigned_inspector: Optional[str] = None
+    run_ml_prediction: bool = True
 
 
 class AssignInspectorInput(BaseModel):
@@ -285,6 +376,25 @@ class DashboardOverview(BaseModel):
     critical_alerts: int
 
 
+def normalize_affiliation(value: Optional[str]) -> str:
+    aliases = {
+        "central government": "Ministry of Central Govt",
+        "ministry of central govt": "Ministry of Central Govt",
+        "state government": "Ministry of State Govt",
+        "ministry of state govt": "Ministry of State Govt",
+        "public": "Public",
+    }
+    normalized = (value or "Public").strip().lower()
+    if normalized not in aliases:
+        raise HTTPException(status_code=400, detail="Affiliation must be Public, Central Government, or State Government")
+    return aliases[normalized]
+
+
+def normalize_state_key(value: Optional[str]) -> str:
+    """Normalize state names so usernames such as 'westbengal' match 'West Bengal'."""
+    return re.sub(r"[^a-z0-9]", "", (value or "").strip().lower())
+
+
 def get_current_user(
     session_user_id: Optional[int] = Header(default=None, alias="X-User-ID"),
     user_role: Optional[str] = Header(default=None, alias="X-User-Role"),
@@ -295,7 +405,7 @@ def get_current_user(
 
     with closing(get_connection()) as connection:
         user = connection.execute(
-            "SELECT id, name, role FROM users WHERE id = ? AND role = ?",
+            "SELECT id, name, role, affiliation FROM users WHERE id = ? AND role = ?",
             (session_user_id, user_role.strip().lower()),
         ).fetchone()
     if user is None:
@@ -321,7 +431,7 @@ def get_optional_user(
         raise HTTPException(status_code=401, detail="Invalid user session")
     with closing(get_connection()) as connection:
         user = connection.execute(
-            "SELECT id, name, role FROM users WHERE id = ? AND role = ?",
+            "SELECT id, name, role, affiliation FROM users WHERE id = ? AND role = ?",
             (user_id, user_role.strip().lower()),
         ).fetchone()
     if user is None:
@@ -726,6 +836,60 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
+def validate_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
+        raise HTTPException(status_code=400, detail="Enter a valid officer email address")
+    return normalized
+
+
+def send_invitation_email(email: str, name: str, password: str) -> bool:
+    host = os.getenv("SMTP_HOST")
+    if not host:
+        logging.warning("SMTP_HOST is not configured; invitation credentials generated for %s", email)
+        return False
+
+    message = EmailMessage()
+    message["Subject"] = "MoSPI Infrastructure Portal officer credentials"
+    message["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@mospi.gov.in"))
+    message["To"] = email
+    message.set_content(
+        f"Dear {name},\n\n"
+        "An Inspector Officer account has been created for the MoSPI Infrastructure Monitoring Portal.\n\n"
+        f"Username: {email}\nTemporary password: {password}\n\n"
+        "Please sign in and change your password immediately.\n"
+    )
+    port = int(os.getenv("SMTP_PORT", "587"))
+    with smtplib.SMTP(host, port, timeout=15) as server:
+        server.starttls()
+        username = os.getenv("SMTP_USER")
+        if username:
+            server.login(username, re.sub(r"\s+", "", os.getenv("SMTP_PASSWORD", "")))
+        server.send_message(message)
+    return True
+
+
+def send_otp_email(email: str, otp: str) -> bool:
+    host = os.getenv("SMTP_HOST")
+    if not host:
+        return False
+    message = EmailMessage()
+    message["Subject"] = "MoSPI officer email verification OTP"
+    message["From"] = os.getenv("SMTP_FROM", os.getenv("SMTP_USER", "noreply@mospi.gov.in"))
+    message["To"] = email
+    message.set_content(
+        "Your MoSPI officer email verification code is "
+        f"{otp}. It expires in {OTP_EXPIRY_MINUTES} minutes."
+    )
+    with smtplib.SMTP(host, int(os.getenv("SMTP_PORT", "587")), timeout=15) as server:
+        server.starttls()
+        username = os.getenv("SMTP_USER")
+        if username:
+            server.login(username, re.sub(r"\s+", "", os.getenv("SMTP_PASSWORD", "")))
+        server.send_message(message)
+    return True
+
+
 def project_from_row(row: sqlite3.Row) -> ProjectStat:
     return ProjectStat(**dict(row))
 
@@ -792,6 +956,34 @@ def create_high_risk_notifications(connection, project: sqlite3.Row | ProjectSta
         )
 
 
+def record_project_history(
+    connection,
+    project_row: sqlite3.Row,
+    event_type: str,
+    changed_fields: List[str],
+    actor: Optional[sqlite3.Row],
+    recorded_at: Optional[str] = None,
+) -> None:
+    """Persist a complete post-change snapshot for the project timeline."""
+    connection.execute(
+        """
+        INSERT INTO project_update_history
+            (project_id, event_type, changed_fields, snapshot, actor_id, actor_name, actor_role, recorded_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+        """,
+        (
+            project_row["id"],
+            event_type,
+            json.dumps(changed_fields),
+            json.dumps(dict(project_row), default=str),
+            actor["id"] if actor else None,
+            actor["name"] if actor else "System",
+            actor["role"] if actor else "system",
+            recorded_at,
+        ),
+    )
+
+
 def normalize_project_assignment(connection, project_id: str) -> None:
     """Keep legacy assignment columns and the canonical officer ID synchronized."""
     connection.execute(
@@ -809,6 +1001,14 @@ def normalize_project_assignment(connection, project_id: str) -> None:
 # ── Database initialisation ────────────────────────────────────────────────────
 def initialize_database() -> None:
     with closing(get_connection()) as connection:
+        # Migration for affiliation column
+        try:
+            connection.execute("ALTER TABLE users ADD COLUMN affiliation TEXT DEFAULT 'Public'")
+            connection.commit()
+            logging.info("Migration: added affiliation column to users")
+        except Exception:
+            pass
+
         # Existing databases may still have the original role constraint.
         users_schema = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'"
@@ -822,6 +1022,9 @@ def initialize_database() -> None:
                     name TEXT NOT NULL,
                     role TEXT NOT NULL CHECK (role IN ('admin', 'inspector', 'user')),
                     password_hash TEXT NOT NULL,
+                    email TEXT,
+                    affiliation TEXT DEFAULT 'Public',
+                    must_change_password INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     last_seen_at TEXT,
                     UNIQUE(name, role)
@@ -832,10 +1035,11 @@ def initialize_database() -> None:
                 row[1] for row in connection.execute("PRAGMA table_info(users)").fetchall()
             }
             last_seen_expression = "last_seen_at" if "last_seen_at" in user_columns else "NULL"
+            affiliation_expression = "affiliation" if "affiliation" in user_columns else "'Public'"
             connection.execute(
                 f"""
-                INSERT INTO users_new (id, name, role, password_hash, created_at, last_seen_at)
-                SELECT id, name, role, password_hash, created_at, {last_seen_expression}
+                INSERT INTO users_new (id, name, role, password_hash, email, affiliation, must_change_password, created_at, last_seen_at)
+                SELECT id, name, role, password_hash, NULL, {affiliation_expression}, 0, created_at, {last_seen_expression}
                 FROM users;
                 """
             )
@@ -851,6 +1055,9 @@ def initialize_database() -> None:
                 name TEXT NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('admin', 'inspector', 'user')),
                 password_hash TEXT NOT NULL,
+                email TEXT,
+                affiliation TEXT DEFAULT 'Public',
+                must_change_password INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 last_seen_at TEXT,
                 UNIQUE(name, role)
@@ -858,6 +1065,18 @@ def initialize_database() -> None:
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_users_name_unique
             ON users (LOWER(name));
+
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TEXT,
+                resolved_by INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id),
+                FOREIGN KEY(resolved_by) REFERENCES users(id)
+            );
+
 
             CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY,
@@ -900,8 +1119,66 @@ def initialize_database() -> None:
                 FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS project_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                comment TEXT NOT NULL,
+                image_filename TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS project_update_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                changed_fields TEXT NOT NULL DEFAULT '[]',
+                snapshot TEXT NOT NULL,
+                actor_id INTEGER,
+                actor_name TEXT NOT NULL,
+                actor_role TEXT NOT NULL,
+                recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY(actor_id) REFERENCES users(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_history_project_time
+            ON project_update_history(project_id, recorded_at DESC, id DESC);
+
+            CREATE TABLE IF NOT EXISTS deleted_project_backups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT NOT NULL,
+                project_name TEXT NOT NULL,
+                snapshot TEXT NOT NULL,
+                deleted_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                deleted_by INTEGER NOT NULL,
+                deleted_by_name TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_deleted_project_backups_expiry
+            ON deleted_project_backups(expires_at);
             """
         )
+
+        existing_projects = connection.execute(
+            """
+            SELECT p.* FROM projects p
+            WHERE NOT EXISTS (
+                SELECT 1 FROM project_update_history h WHERE h.project_id = p.id
+            )
+            """
+        ).fetchall()
+        for project_row in existing_projects:
+            record_project_history(
+                connection,
+                project_row,
+                "project_baseline",
+                list(dict(project_row).keys()),
+                None,
+                project_row["start_date"] or project_row["created_at"],
+            )
 
         users = [
             ("Administrator", "admin"),
@@ -920,6 +1197,8 @@ def initialize_database() -> None:
         # ── Migrate existing databases: add new columns if missing ─────────
         migration_columns = [
             ("users", "last_seen_at", "TEXT"),
+            ("users", "email", "TEXT"),
+            ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
             ("projects", "approval_date", "TEXT"),
             ("projects", "revised_completion_date", "TEXT"),
             ("projects", "project_status", "TEXT DEFAULT 'Ongoing'"),
@@ -978,12 +1257,26 @@ async def login(data: LoginInput):
 
     with closing(get_connection()) as connection:
         user = connection.execute(
-            "SELECT id, name, role, password_hash FROM users WHERE lower(name) = lower(?) AND role = ?",
-            (lookup_name, data.role),
+                        """
+                        SELECT id, name, role, email, password_hash, must_change_password, affiliation
+                        FROM users
+                        WHERE (lower(name) = lower(?) OR lower(email) = lower(?))
+                            AND (
+                                role = ?
+                                OR (
+                                    ? = 'user'
+                                    AND role = 'admin'
+                                    AND affiliation IN ('Ministry of Central Govt', 'Ministry of State Govt')
+                                )
+                            )
+                        """,
+                        (lookup_name, lookup_name, data.role, data.role.strip().lower()),
         ).fetchone()
 
     if user is None or not verify_password(data.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid role, name, or password")
+    if data.role.strip().lower() == "user" and normalize_affiliation(data.affiliation) != normalize_affiliation(user["affiliation"]):
+        raise HTTPException(status_code=401, detail="Selected affiliation does not match this account")
 
     if user["role"] == "inspector":
         with closing(get_connection()) as connection:
@@ -993,7 +1286,11 @@ async def login(data: LoginInput):
             )
             connection.commit()
 
-    return UserResponse(id=user["id"], name=user["name"], role=user["role"])
+    return UserResponse(
+        id=user["id"], name=user["name"], role=user["role"], email=user["email"],
+        must_change_password=bool(user["must_change_password"]),
+        affiliation=dict(user).get("affiliation", "Public"),
+    )
 
 
 @app.post("/api/v1/auth/register", response_model=UserResponse, tags=["Authentication"])
@@ -1005,15 +1302,23 @@ async def register(data: RegisterInput):
     role = data.role.strip().lower()
     if role not in ("admin", "inspector", "user"):
         raise HTTPException(status_code=400, detail="Role must be 'admin', 'inspector', or 'user'")
+    # Ministry-affiliated users must register as 'user' and request admin via the approval flow
+    affiliation = normalize_affiliation(data.affiliation)
+    if affiliation in ("Ministry of Central Govt", "Ministry of State Govt") and role == "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Ministry personnel cannot directly register as Admin. Please register as a User and request admin access from your dashboard.",
+        )
     if not name:
         raise HTTPException(status_code=400, detail="Full name cannot be blank")
     if len(data.password) < 4:
         raise HTTPException(status_code=400, detail="Password must be at least 4 characters")
+    email = validate_email(data.email) if data.email else None
 
     with closing(get_connection()) as connection:
         existing = connection.execute(
-            "SELECT id, role FROM users WHERE lower(name) = lower(?)",
-            (name,),
+            "SELECT id, role FROM users WHERE lower(name) = lower(?) OR (? IS NOT NULL AND lower(email) = lower(?))",
+            (name, email, email),
         ).fetchone()
         if existing:
             raise HTTPException(
@@ -1023,13 +1328,50 @@ async def register(data: RegisterInput):
 
         hashed = hash_password(data.password)
         cursor = connection.execute(
-            "INSERT INTO users (name, role, password_hash) VALUES (?, ?, ?)",
-            (name, role, hashed),
+            "INSERT INTO users (name, role, password_hash, email, affiliation) VALUES (?, ?, ?, ?, ?)",
+            (name, role, hashed, email, affiliation),
         )
         user_id = cursor.lastrowid
         connection.commit()
 
-    return UserResponse(id=user_id, name=name, role=role)
+    return UserResponse(id=user_id, name=name, role=role, email=email, affiliation=affiliation)
+
+
+@app.post("/api/v1/auth/change-password", response_model=UserResponse, tags=["Authentication"])
+async def change_password(data: ChangePasswordInput, user: sqlite3.Row = Depends(get_current_user)):
+    if len(data.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    with closing(get_connection()) as connection:
+        current = connection.execute("SELECT password_hash FROM users WHERE id = ?", (user["id"],)).fetchone()
+        if not current or not verify_password(data.current_password, current["password_hash"]):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        connection.execute(
+            "UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?",
+            (hash_password(data.new_password), user["id"]),
+        )
+        connection.commit()
+        updated = connection.execute("SELECT id, name, role, email, must_change_password FROM users WHERE id = ?", (user["id"],)).fetchone()
+    return UserResponse(id=updated["id"], name=updated["name"], role=updated["role"], email=updated["email"], must_change_password=False)
+
+
+@app.get("/api/v1/auth/me", response_model=UserResponse, tags=["Authentication"])
+async def current_user(
+    session_user_id: Optional[int] = Header(default=None, alias="X-User-ID"),
+):
+    if session_user_id is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    with closing(get_connection()) as connection:
+        user = connection.execute(
+            "SELECT id, name, role, email, must_change_password, affiliation FROM users WHERE id = ?",
+            (session_user_id,),
+        ).fetchone()
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid user session")
+    return UserResponse(
+        id=user["id"], name=user["name"], role=user["role"], email=user["email"],
+        must_change_password=bool(user["must_change_password"]),
+        affiliation=normalize_affiliation(user["affiliation"]),
+    )
 
 
 @app.get("/api/v1/users", response_model=List[UserItem], tags=["User Management"])
@@ -1037,13 +1379,14 @@ async def list_users(_user: sqlite3.Row = Depends(require_role("admin"))):
     """Retrieve all users and administrators stored in the SQLite database."""
     with closing(get_connection()) as connection:
         rows = connection.execute(
-            "SELECT id, name, role, created_at FROM users ORDER BY role ASC, id ASC"
+            "SELECT id, name, role, email, created_at FROM users ORDER BY role ASC, id ASC"
         ).fetchall()
     return [
         UserItem(
             id=r["id"],
             name=r["name"],
             role=r["role"],
+            email=r["email"],
             created_at=r["created_at"],
         )
         for r in rows
@@ -1054,6 +1397,82 @@ async def list_users(_user: sqlite3.Row = Depends(require_role("admin"))):
 async def create_user_by_admin(data: RegisterInput, _user: sqlite3.Row = Depends(require_role("admin"))):
     """Admin endpoint to create user/admin accounts in the database."""
     return await register(data)
+
+
+@app.post("/api/v1/users/invite-officer", tags=["User Management"])
+async def invite_officer(data: InviteOfficerInput, _user: sqlite3.Row = Depends(require_role("admin"))):
+    name = data.name.strip()
+    email = validate_email(data.email)
+    if not name:
+        raise HTTPException(status_code=400, detail="Officer name cannot be blank")
+    temporary_password = secrets.token_urlsafe(10)
+    try:
+        email_sent = send_invitation_email(email, name, temporary_password)
+    except Exception as exc:
+        logging.exception("Could not send officer invitation to %s", email)
+        raise HTTPException(status_code=502, detail=f"Could not send invitation email: {exc}") from exc
+    if not email_sent:
+        raise HTTPException(
+            status_code=503,
+            detail="Email delivery is not configured. Set SMTP_HOST and SMTP credentials, then try again.",
+        )
+
+    with closing(get_connection()) as connection:
+        existing = connection.execute(
+            "SELECT id FROM users WHERE lower(name) = lower(?) OR lower(email) = lower(?)",
+            (name, email),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="An account with this name or email already exists")
+        cursor = connection.execute(
+            "INSERT INTO users (name, role, password_hash, email, must_change_password) VALUES (?, 'inspector', ?, ?, 1)",
+            (name, hash_password(temporary_password), email),
+        )
+        user_id = cursor.lastrowid
+        connection.commit()
+    return {
+        "user": UserResponse(id=user_id, name=name, role="inspector", email=email, must_change_password=True),
+        "email_sent": True,
+    }
+
+
+@app.post("/send-otp", tags=["Authentication"])
+@app.post("/api/v1/send-otp", tags=["Authentication"])
+async def send_otp(data: SendOtpInput, _user: sqlite3.Row = Depends(require_role("admin"))):
+    email = validate_email(data.email)
+    otp = f"{secrets.randbelow(1_000_000):06d}"
+    try:
+        if not send_otp_email(email, otp):
+            raise HTTPException(status_code=503, detail="Email delivery is not configured")
+    except HTTPException:
+        raise
+    except smtplib.SMTPAuthenticationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Gmail rejected SMTP credentials. Enable 2-Step Verification and use a fresh 16-character Gmail App Password in SMTP_PASSWORD.",
+        ) from exc
+    except Exception as exc:
+        logging.exception("Could not send OTP to %s", email)
+        raise HTTPException(status_code=502, detail=f"Could not send verification email: {exc}") from exc
+    OTP_STORE[email] = (otp, datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES))
+    return {"message": "Verification code sent", "expires_in_seconds": OTP_EXPIRY_MINUTES * 60}
+
+
+@app.post("/verify-otp", tags=["Authentication"])
+@app.post("/api/v1/verify-otp", tags=["Authentication"])
+async def verify_otp(data: VerifyOtpInput, _user: sqlite3.Row = Depends(require_role("admin"))):
+    email = validate_email(data.email)
+    stored = OTP_STORE.get(email)
+    if not stored:
+        raise HTTPException(status_code=400, detail="No active verification code. Request a new OTP.")
+    expected_otp, expires_at = stored
+    if datetime.utcnow() >= expires_at:
+        OTP_STORE.pop(email, None)
+        raise HTTPException(status_code=400, detail="Verification code has expired. Request a new OTP.")
+    if not compare_digest(expected_otp, data.otp.strip()):
+        raise HTTPException(status_code=400, detail="Incorrect verification code")
+    OTP_STORE.pop(email, None)
+    return {"verified": True, "email": email}
 
 
 @app.delete("/api/v1/users/{user_id}", tags=["User Management"])
@@ -1099,20 +1518,27 @@ async def get_database_stats():
 
 @app.get("/api/v1/inspectors", tags=["User Management"])
 async def list_inspectors(_user: sqlite3.Row = Depends(require_role("admin"))):
-    """Retrieve Inspector Officers who are currently active for assignment."""
+    """Retrieve all database inspectors and flag currently signed-in officers."""
     online_since = (datetime.utcnow() - timedelta(minutes=5)).isoformat()
     with closing(get_connection()) as connection:
         rows = connection.execute(
             """
-            SELECT id, name, role, created_at, last_seen_at
+            SELECT id, name, role, email, created_at, last_seen_at
             FROM users
-            WHERE role = 'inspector' AND last_seen_at >= ?
+            WHERE role = 'inspector'
             ORDER BY name ASC
-            """,
-            (online_since,),
+            """
         ).fetchall()
     return [
-        UserItem(id=r["id"], name=r["name"], role=r["role"], created_at=r["created_at"], last_seen_at=r["last_seen_at"], is_online=True)
+        UserItem(
+            id=r["id"],
+            name=r["name"],
+            role=r["role"],
+            email=r["email"],
+            created_at=r["created_at"],
+            last_seen_at=r["last_seen_at"],
+            is_online=bool(r["last_seen_at"] and r["last_seen_at"] >= online_since),
+        )
         for r in rows
     ]
 
@@ -1214,6 +1640,10 @@ async def get_projects(
     if user and user["role"] == "inspector":
         query += " AND assigned_officer_id = ?"
         params.append(user["id"])
+    if user and normalize_affiliation(user["affiliation"]) == "Ministry of State Govt":
+        state_key = normalize_state_key(user["name"])
+        query += " AND lower(replace(replace(location, ' ', ''), '-', '')) = ?"
+        params.append(state_key)
     if state and state.lower() != "all":
         query += " AND lower(location) = lower(?)"
         params.append(state)
@@ -1239,19 +1669,232 @@ async def get_project(project_id: str, user: Optional[sqlite3.Row] = Depends(get
             raise HTTPException(status_code=404, detail="Project not found")
         if user and user["role"] == "inspector" and row["assigned_officer_id"] != user["id"]:
             raise HTTPException(status_code=403, detail="This project is not assigned to you")
+        if user and normalize_affiliation(user["affiliation"]) == "Ministry of State Govt":
+            if normalize_state_key(row["location"]) != normalize_state_key(user["name"]):
+                raise HTTPException(status_code=403, detail="This project is outside your State Government scope")
         return project_from_row(row)
+
+
+@app.get("/api/v1/projects/{project_id}/history", response_model=List[ProjectHistoryItem], tags=["Project History"])
+async def get_project_history(
+    project_id: str,
+    from_date: Optional[str] = None,
+    to_date: Optional[str] = None,
+    user: sqlite3.Row = Depends(require_role("admin", "inspector")),
+):
+    """Return complete project snapshots, optionally constrained by recorded date."""
+    try:
+        if from_date:
+            date.fromisoformat(from_date)
+        if to_date:
+            date.fromisoformat(to_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="History dates must use YYYY-MM-DD format") from exc
+
+    with closing(get_connection()) as connection:
+        project = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if user["role"] == "inspector":
+            is_assigned = (
+                project["assigned_officer_id"] == user["id"]
+                or project["assigned_inspector_id"] == user["id"]
+                or (project["assigned_inspector"] or "").lower() == user["name"].lower()
+            )
+            if not is_assigned:
+                raise HTTPException(status_code=403, detail="This project is not assigned to you")
+        if normalize_affiliation(user["affiliation"]) == "Ministry of State Govt":
+            if normalize_state_key(project["location"]) != normalize_state_key(user["name"]):
+                raise HTTPException(status_code=403, detail="This project is outside your State Government scope")
+
+        clauses = ["project_id = ?"]
+        params = [project_id]
+        if from_date:
+            clauses.append("recorded_at >= ?")
+            params.append(f"{from_date} 00:00:00")
+        if to_date:
+            clauses.append("recorded_at <= ?")
+            params.append(f"{to_date} 23:59:59")
+        rows = connection.execute(
+            f"SELECT * FROM project_update_history WHERE {' AND '.join(clauses)} ORDER BY recorded_at DESC, id DESC",
+            params,
+        ).fetchall()
+
+    return [
+        ProjectHistoryItem(
+            id=row["id"],
+            project_id=row["project_id"],
+            event_type=row["event_type"],
+            changed_fields=json.loads(row["changed_fields"] or "[]"),
+            snapshot=json.loads(row["snapshot"] or "{}"),
+            actor_id=row["actor_id"],
+            actor_name=row["actor_name"],
+            actor_role=row["actor_role"],
+            recorded_at=row["recorded_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.get("/api/v1/projects/{project_id}/comments", response_model=List[ProjectComment], tags=["Project Comments"])
+async def list_project_comments(project_id: str):
+    with closing(get_connection()) as connection:
+        project = connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        rows = connection.execute(
+            "SELECT id, project_id, comment, image_filename, created_at FROM project_comments WHERE project_id = ? ORDER BY created_at DESC, id DESC",
+            (project_id,),
+        ).fetchall()
+    return [
+        ProjectComment(
+            id=row["id"],
+            project_id=row["project_id"],
+            comment=row["comment"],
+            image_url=f"/comment-uploads/{row['image_filename']}",
+            created_at=row["created_at"],
+        )
+        for row in rows
+    ]
+
+
+@app.post("/api/v1/projects/{project_id}/comments", response_model=ProjectComment, tags=["Project Comments"])
+async def add_project_comment(
+    project_id: str,
+    comment: str = Form(...),
+    image: UploadFile = File(...),
+    _user: sqlite3.Row = Depends(require_role("user")),
+):
+    """Accept an anonymous public comment with a mandatory evidence image."""
+    text = comment.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment cannot be empty")
+    if not image.content_type or not image.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Please upload a valid image")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="An image is required")
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller")
+
+    extension = Path(image.filename or "image").suffix.lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".gif", ".webp"}:
+        extension = ".jpg" if image.content_type == "image/jpeg" else ".png"
+    stored_name = f"{uuid.uuid4().hex}{extension}"
+    stored_path = COMMENT_UPLOADS_DIR / stored_name
+
+    with closing(get_connection()) as connection:
+        project = connection.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        stored_path.write_bytes(image_bytes)
+        cursor = connection.execute(
+            "INSERT INTO project_comments (project_id, comment, image_filename) VALUES (?, ?, ?)",
+            (project_id, text, stored_name),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT id, project_id, comment, image_filename, created_at FROM project_comments WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
+
+    return ProjectComment(
+        id=row["id"],
+        project_id=row["project_id"],
+        comment=row["comment"],
+        image_url=f"/comment-uploads/{row['image_filename']}",
+        created_at=row["created_at"],
+    )
 
 
 @app.delete("/api/v1/projects/{project_id}", tags=["Projects"])
 async def delete_project(project_id: str, _user: sqlite3.Row = Depends(require_role("admin"))):
-    """Delete a project from the SQLite database."""
+    """Delete a project and retain an Admin-only recovery backup for 30 days."""
     with closing(get_connection()) as connection:
-        existing = connection.execute("SELECT id, name FROM projects WHERE id = ?", (project_id,)).fetchone()
+        existing = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Project not found")
+        deleted_at = datetime.utcnow()
+        expires_at = deleted_at + timedelta(days=30)
+        connection.execute(
+            """
+            INSERT INTO deleted_project_backups
+                (project_id, project_name, snapshot, deleted_at, expires_at, deleted_by, deleted_by_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                existing["id"], existing["name"], json.dumps(dict(existing), default=str),
+                deleted_at.isoformat(), expires_at.isoformat(), _user["id"], _user["name"],
+            ),
+        )
         connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         connection.commit()
-    return {"message": f"Project {project_id} deleted successfully", "id": project_id}
+    return {
+        "message": f"Project {project_id} deleted successfully. Backup retained for 30 days.",
+        "id": project_id,
+        "backup_expires_at": expires_at.isoformat(),
+    }
+
+
+def cleanup_expired_project_backups(connection) -> None:
+    connection.execute(
+        "DELETE FROM deleted_project_backups WHERE expires_at <= ?",
+        (datetime.utcnow().isoformat(),),
+    )
+
+
+@app.get("/api/v1/admin/project-backups", response_model=List[DeletedProjectBackup], tags=["Admin"])
+async def list_project_backups(_user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        cleanup_expired_project_backups(connection)
+        rows = connection.execute(
+            "SELECT * FROM deleted_project_backups ORDER BY deleted_at DESC, id DESC"
+        ).fetchall()
+        connection.commit()
+    return [
+        DeletedProjectBackup(
+            id=row["id"], project_id=row["project_id"], project_name=row["project_name"],
+            snapshot=json.loads(row["snapshot"]), deleted_at=row["deleted_at"],
+            expires_at=row["expires_at"], deleted_by=row["deleted_by"],
+            deleted_by_name=row["deleted_by_name"],
+        )
+        for row in rows
+    ]
+
+
+@app.post("/api/v1/admin/project-backups/{backup_id}/restore", tags=["Admin"])
+async def restore_project_backup(backup_id: int, _user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        cleanup_expired_project_backups(connection)
+        backup = connection.execute(
+            "SELECT * FROM deleted_project_backups WHERE id = ?",
+            (backup_id,),
+        ).fetchone()
+        if not backup:
+            raise HTTPException(status_code=404, detail="Backup not found or its 30-day retention period expired")
+        if connection.execute("SELECT 1 FROM projects WHERE id = ?", (backup["project_id"],)).fetchone():
+            raise HTTPException(status_code=409, detail="A project with this ID already exists")
+        snapshot = json.loads(backup["snapshot"])
+        allowed = {field for field in ProjectStat.model_fields if field in snapshot}
+        restored = ProjectStat(**{field: snapshot[field] for field in allowed})
+        insert_project(connection, restored)
+        restored_row = connection.execute("SELECT * FROM projects WHERE id = ?", (restored.id,)).fetchone()
+        record_project_history(connection, restored_row, "project_restored", list(snapshot.keys()), _user)
+        connection.execute("DELETE FROM deleted_project_backups WHERE id = ?", (backup_id,))
+        connection.commit()
+    return {"message": f"Project {restored.id} restored successfully", "project": project_from_row(restored_row)}
+
+
+@app.delete("/api/v1/admin/project-backups/{backup_id}", tags=["Admin"])
+async def permanently_delete_project_backup(backup_id: int, _user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        cleanup_expired_project_backups(connection)
+        deleted = connection.execute("DELETE FROM deleted_project_backups WHERE id = ?", (backup_id,))
+        if deleted.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Backup not found or its 30-day retention period expired")
+        connection.commit()
+    return {"message": "Backup permanently deleted"}
 
 
 @app.patch("/api/v1/projects/{project_id}/status", response_model=ProjectStat, tags=["Projects"])
@@ -1273,40 +1916,79 @@ async def update_project_status(
                 row["assigned_officer_id"] == user["id"]
                 or row["assigned_inspector_id"] == user["id"]
                 or (row["assigned_inspector"] or "").lower() == user["name"].lower()
+                or not row["assigned_inspector"]
+                or (row["assigned_inspector"] or "").lower() in ("unassigned", "none", "")
             )
             if not is_assigned:
                 raise HTTPException(status_code=403, detail="This project is not assigned to you")
             if data.assigned_inspector is not None:
                 raise HTTPException(status_code=403, detail="Inspectors cannot reassign projects")
 
-        fields, values = [], []
+        fields, values, changed_fields = [], [], []
         if data.status is not None:
             fields.append("status = ?")
             values.append(data.status)
+            changed_fields.append("status")
         if data.project_status is not None:
             fields.append("project_status = ?")
             values.append(data.project_status)
+            changed_fields.append("project_status")
         if data.physical_progress is not None:
             fields.append("physical_progress = ?")
             values.append(data.physical_progress)
+            changed_fields.append("physical_progress")
         if data.revised_completion_date is not None:
             fields.append("revised_completion_date = ?")
             values.append(data.revised_completion_date)
+            changed_fields.append("revised_completion_date")
         if data.inspection_notes is not None:
             fields.append("inspection_notes = ?")
             values.append(data.inspection_notes)
             fields.append("last_inspected_at = ?")
             values.append(datetime.utcnow().isoformat())
+            changed_fields.extend(["inspection_notes", "last_inspected_at"])
         if data.assigned_inspector is not None:
             fields.append("assigned_inspector = ?")
             values.append(data.assigned_inspector)
+            changed_fields.append("assigned_inspector")
+
+        ml_pred = None
+        if data.run_ml_prediction:
+            # Recalculate ML prediction on the revised data.
+            prog = data.physical_progress if data.physical_progress is not None else (row["physical_progress"] or 0.0)
+            end_d = data.revised_completion_date or row["revised_completion_date"] or row["expected_end_date"]
+            ml_pred = calculate_ml_prediction(
+                orig_cost=row["original_cost"],
+                rev_cost=row["revised_cost"],
+                exp=row["expenditure"] or 0.0,
+                progress=prog,
+                sector=row["sector"],
+                ministry=row["ministry"] or "MoRTH",
+                state=row["location"] or "Maharashtra",
+                start_date=row["start_date"],
+                end_date=end_d,
+            )
+            fields.append("risk_score = ?")
+            values.append(ml_pred.risk_score)
+            changed_fields.append("risk_score")
+            fields.append("cost_overrun_prob = ?")
+            values.append(ml_pred.cost_overrun_prob)
+            changed_fields.append("cost_overrun_prob")
+            fields.append("time_delay_prob = ?")
+            values.append(ml_pred.time_delay_prob)
+            changed_fields.append("time_delay_prob")
 
         if fields:
             values.append(project_id)
             connection.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", values)
-            connection.commit()
 
         updated = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if fields:
+            record_project_history(connection, updated, "project_update", changed_fields, user)
+        if ml_pred and ml_pred.risk_score >= 70:
+            create_high_risk_notifications(connection, updated)
+        connection.commit()
+
         return project_from_row(updated)
 
 
@@ -1342,11 +2024,17 @@ async def assign_project_inspector(
             "UPDATE projects SET assigned_officer_id = ? WHERE id = ?",
             (inspector_id, project_id),
         )
-        connection.commit()
         updated = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        record_project_history(
+            connection,
+            updated,
+            "inspector_assigned",
+            ["assigned_inspector", "assigned_inspector_id", "assigned_officer_id"],
+            _user,
+        )
         if updated["risk_score"] >= 70:
             create_high_risk_notifications(connection, updated)
-            connection.commit()
+        connection.commit()
         return project_from_row(updated)
 
 
@@ -1397,6 +2085,14 @@ async def create_project(data: CreateProjectInput, _user: sqlite3.Row = Depends(
         project.assigned_officer_id = data.assigned_inspector_id
         insert_project(connection, project)
         created = connection.execute("SELECT * FROM projects WHERE id = ?", (project.id,)).fetchone()
+        record_project_history(
+            connection,
+            created,
+            "project_created",
+            list(dict(created).keys()),
+            None,
+            created["start_date"] or created["created_at"],
+        )
         if created["risk_score"] >= 70:
             create_high_risk_notifications(connection, created)
         connection.commit()
@@ -1512,6 +2208,243 @@ async def predict_project_risk_direct(data: ProjectPayload):
     }
 
 
+class RepredictInput(BaseModel):
+    """Optional overrides: pass revised values from the inspector update form so the ML
+    pipeline can evaluate what the scores will look like *after* saving the update."""
+    revised_cost: Optional[float] = None
+    expenditure: Optional[float] = None
+    physical_progress: Optional[float] = None
+    revised_completion_date: Optional[str] = None
+
+
+@app.post("/api/v1/projects/{project_id}/repredict", response_model=MLPredictionResult, tags=["Predictions"])
+async def repredict_project(
+    project_id: str,
+    data: RepredictInput,
+    user: sqlite3.Row = Depends(require_role("admin", "inspector")),
+):
+    """
+    Re-run the full XGBoost ML prediction pipeline for a single project using its
+    current (or inspector-revised) field values. Persists updated risk_score,
+    cost_overrun_prob, time_delay_prob, and status back to the database.
+    Returns the full MLPredictionResult so the UI can show inline results.
+    """
+    with closing(get_connection()) as connection:
+        row = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if user["role"] == "inspector":
+            is_assigned = (
+                row["assigned_officer_id"] == user["id"]
+                or row["assigned_inspector_id"] == user["id"]
+                or (row["assigned_inspector"] or "").lower() == user["name"].lower()
+                or not row["assigned_inspector"]
+                or (row["assigned_inspector"] or "").lower() in ("unassigned", "none", "")
+            )
+            if not is_assigned:
+                raise HTTPException(status_code=403, detail="This project is not assigned to you")
+
+        # Merge caller-supplied overrides with stored values
+        orig_cost = row["original_cost"]
+        rev_cost = data.revised_cost if data.revised_cost is not None else row["revised_cost"]
+        exp = data.expenditure if data.expenditure is not None else (row["expenditure"] or 0.0)
+        progress = data.physical_progress if data.physical_progress is not None else (row["physical_progress"] or 0.0)
+        sector = row["sector"]
+        ministry = row["ministry"] or "MoRTH"
+        state = row["location"] or "Maharashtra"
+        start_date = row["start_date"]
+        # Use revised_completion_date as the end date when available
+        end_date = data.revised_completion_date or row["revised_completion_date"] or row["expected_end_date"]
+
+        prediction = calculate_ml_prediction(
+            orig_cost=orig_cost,
+            rev_cost=rev_cost,
+            exp=exp,
+            progress=progress,
+            sector=sector,
+            ministry=ministry,
+            state=state,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        new_status = (
+            "At Risk" if prediction.risk_score > 70
+            else ("Delayed" if prediction.time_delay_prob > 0.6 else "Ongoing")
+        )
+
+        connection.execute(
+            """
+            UPDATE projects
+            SET risk_score = ?,
+                cost_overrun_prob = ?,
+                time_delay_prob = ?,
+                status = ?
+            WHERE id = ?
+            """,
+            (
+                prediction.risk_score,
+                prediction.cost_overrun_prob,
+                prediction.time_delay_prob,
+                new_status,
+                project_id,
+            ),
+        )
+
+        if prediction.risk_score >= 70:
+            refreshed_row = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+            create_high_risk_notifications(connection, refreshed_row)
+
+        connection.commit()
+
+    return prediction
+
+
+@app.post("/api/v1/predictions/refresh", tags=["Predictions"])
+async def refresh_all_predictions(
+    _user: sqlite3.Row = Depends(require_role("admin", "inspector")),
+):
+    """
+    Re-run the ML prediction pipeline for every project stored in the database
+    and persist the updated risk_score, cost_overrun_prob, and time_delay_prob.
+    Does NOT modify any ML model code – it simply calls the existing
+    calculate_ml_prediction helper for each project row.
+    """
+    updated_count = 0
+    errors = []
+
+    with closing(get_connection()) as connection:
+        rows = connection.execute("SELECT * FROM projects").fetchall()
+
+        for row in rows:
+            try:
+                prediction = calculate_ml_prediction(
+                    orig_cost=row["original_cost"],
+                    rev_cost=row["revised_cost"],
+                    exp=row["expenditure"] or 0.0,
+                    progress=row["physical_progress"] or 0.0,
+                    sector=row["sector"],
+                    ministry=row["ministry"] or "MoRTH",
+                    state=row["location"] or "Maharashtra",
+                    start_date=row["start_date"],
+                    end_date=row["expected_end_date"],
+                )
+
+                new_status = (
+                    "At Risk" if prediction.risk_score > 70
+                    else ("Delayed" if prediction.time_delay_prob > 0.6 else "Ongoing")
+                )
+
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET risk_score = ?,
+                        cost_overrun_prob = ?,
+                        time_delay_prob = ?,
+                        status = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        prediction.risk_score,
+                        prediction.cost_overrun_prob,
+                        prediction.time_delay_prob,
+                        new_status,
+                        row["id"],
+                    ),
+                )
+                updated_count += 1
+
+                # Re-create high-risk notifications if score crosses threshold
+                if prediction.risk_score >= 70:
+                    refreshed_row = connection.execute(
+                        "SELECT * FROM projects WHERE id = ?", (row["id"],)
+                    ).fetchone()
+                    create_high_risk_notifications(connection, refreshed_row)
+
+            except Exception as exc:
+                errors.append({"project_id": row["id"], "error": str(exc)})
+                logging.warning(f"Refresh failed for project {row['id']}: {exc}")
+
+        connection.commit()
+
+    return {
+        "message": f"ML model refresh complete. {updated_count} projects updated.",
+        "updated": updated_count,
+        "errors": errors,
+    }
+
+
+@app.post("/api/v1/inspector/repredict-assigned", tags=["Predictions"])
+async def repredict_inspector_assigned_projects(
+    user: sqlite3.Row = Depends(require_role("inspector", "admin")),
+):
+    """
+    Inspector Section Endpoint: Re-run the full XGBoost ML pipeline for all projects
+    assigned to the calling inspector officer. Recalculates risk_score, cost_overrun_prob,
+    and time_delay_prob based on currently recorded field inspection values.
+    """
+    with closing(get_connection()) as connection:
+        if user["role"] == "admin":
+            rows = connection.execute("SELECT * FROM projects").fetchall()
+        else:
+            rows = connection.execute(
+                """SELECT * FROM projects 
+                   WHERE assigned_officer_id = ? 
+                      OR assigned_inspector_id = ? 
+                      OR lower(assigned_inspector) = lower(?)""",
+                (user["id"], user["id"], user["name"]),
+            ).fetchall()
+
+        updated_count = 0
+        for row in rows:
+            try:
+                prediction = calculate_ml_prediction(
+                    orig_cost=row["original_cost"],
+                    rev_cost=row["revised_cost"],
+                    exp=row["expenditure"] or 0.0,
+                    progress=row["physical_progress"] or 0.0,
+                    sector=row["sector"],
+                    ministry=row["ministry"] or "MoRTH",
+                    state=row["location"] or "Maharashtra",
+                    start_date=row["start_date"],
+                    end_date=row["revised_completion_date"] or row["expected_end_date"],
+                )
+                new_status = (
+                    "At Risk" if prediction.risk_score > 70
+                    else ("Delayed" if prediction.time_delay_prob > 0.6 else "Ongoing")
+                )
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET risk_score = ?,
+                        cost_overrun_prob = ?,
+                        time_delay_prob = ?,
+                        status = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        prediction.risk_score,
+                        prediction.cost_overrun_prob,
+                        prediction.time_delay_prob,
+                        new_status,
+                        row["id"],
+                    ),
+                )
+                if prediction.risk_score >= 70:
+                    refreshed = connection.execute("SELECT * FROM projects WHERE id = ?", (row["id"],)).fetchone()
+                    create_high_risk_notifications(connection, refreshed)
+                updated_count += 1
+            except Exception as e:
+                logging.warning(f"Inspector repredict failed for project {row['id']}: {e}")
+
+        connection.commit()
+
+    return {
+        "message": f"Successfully re-predicted ML risk metrics for {updated_count} projects",
+        "updated_count": updated_count,
+    }
+
+
 @app.get("/api/v1/predictions/alerts", tags=["Predictions"])
 async def get_early_warning_alerts(user: Optional[sqlite3.Row] = Depends(get_optional_user)):
     with closing(get_connection()) as connection:
@@ -1565,3 +2498,73 @@ async def get_model_status():
             "file_exists": DELAY_MODEL_PATH.exists(),
         },
     }
+
+@app.post("/api/v1/users/request-admin", tags=["Users"])
+async def request_admin_access(user: sqlite3.Row = Depends(get_current_user)):
+    affiliation = normalize_affiliation(dict(user).get("affiliation"))
+    if user["role"] != "user":
+        raise HTTPException(status_code=403, detail="Only Viewer accounts can request Admin access.")
+    if affiliation not in ["Ministry of Central Govt", "Ministry of State Govt"]:
+        raise HTTPException(status_code=403, detail="Only Ministry personnel can request Admin access.")
+    
+    with closing(get_connection()) as connection:
+        existing = connection.execute("SELECT id FROM access_requests WHERE user_id = ? AND status = 'pending'", (user["id"],)).fetchone()
+        if existing:
+            raise HTTPException(status_code=400, detail="You already have a pending admin access request.")
+        
+        connection.execute("INSERT INTO access_requests (user_id) VALUES (?)", (user["id"],))
+        connection.commit()
+    
+    return {"message": "Admin access request submitted successfully."}
+
+@app.get("/api/v1/admin/access-requests", response_model=List[AccessRequestResponse], tags=["Admin"])
+async def list_access_requests(_user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        rows = connection.execute('''
+            SELECT a.id, a.user_id, a.status, a.created_at, a.resolved_at, a.resolved_by,
+                   u.name as user_name, u.email as user_email, u.affiliation
+            FROM access_requests a
+            JOIN users u ON a.user_id = u.id
+            ORDER BY a.created_at DESC
+        ''').fetchall()
+    
+    return [AccessRequestResponse(**dict(r)) for r in rows]
+
+@app.post("/api/v1/admin/access-requests/{request_id}/approve", tags=["Admin"])
+async def approve_access_request(request_id: int, user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        req = connection.execute(
+            """
+            SELECT a.user_id, a.status, u.role, u.affiliation
+            FROM access_requests a JOIN users u ON u.id = a.user_id
+            WHERE a.id = ?
+            """,
+            (request_id,),
+        ).fetchone()
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found.")
+        if req["status"] != "pending":
+            raise HTTPException(status_code=400, detail=f"Request is already {req['status']}.")
+        if req["role"] != "user" or normalize_affiliation(req["affiliation"]) not in ["Ministry of Central Govt", "Ministry of State Govt"]:
+            raise HTTPException(status_code=400, detail="Only eligible Viewer requests can be approved.")
+        
+        connection.execute("UPDATE access_requests SET status = 'approved', resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?", (user["id"], request_id))
+        connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (req["user_id"],))
+        connection.commit()
+    
+    return {"message": "Request approved. User is now an admin."}
+
+@app.post("/api/v1/admin/access-requests/{request_id}/reject", tags=["Admin"])
+async def reject_access_request(request_id: int, user: sqlite3.Row = Depends(require_role("admin"))):
+    with closing(get_connection()) as connection:
+        req = connection.execute("SELECT status FROM access_requests WHERE id = ?", (request_id,)).fetchone()
+        if not req:
+            raise HTTPException(status_code=404, detail="Request not found.")
+        if req["status"] != "pending":
+            raise HTTPException(status_code=400, detail=f"Request is already {req['status']}.")
+        
+        connection.execute("UPDATE access_requests SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?", (user["id"], request_id))
+        connection.commit()
+    
+    return {"message": "Request rejected."}
+

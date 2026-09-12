@@ -163,11 +163,16 @@
   height: 36px;
   border-radius: 50%;
   background: #f8fafc;
-  border: 1px solid #cbd5e1;
+  border: 1px solid #93c5fd;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.emblem-crest .logic-core-symbol {
+  width: 34px;
+  height: 34px;
 }
 
 .header-subtitle {
@@ -252,6 +257,85 @@
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+.password-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 7px 9px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.password-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.password-modal {
+  width: min(420px, 100%);
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  box-shadow: 0 20px 55px rgba(15, 23, 42, 0.25);
+}
+
+.password-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.password-modal p {
+  margin: 8px 0 16px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.password-modal label {
+  display: block;
+  margin-top: 12px;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.password-modal input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.password-error {
+  margin-top: 12px;
+  color: #b91c1c;
+  font-size: 0.8rem;
+}
+
+.password-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .notification-item {

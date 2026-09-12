@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { loginUser, registerUser, sendAuthHeartbeat } from '../services/api';
+import { loginUser, registerUser, sendAuthHeartbeat, fetchCurrentUser } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -16,7 +16,7 @@ export const ROLE_CONFIG = {
     bg: '#eff6ff',
     border: '#bfdbfe',
     description: 'Full rights: add, delete projects & manage users',
-    nav: ['dashboard', 'projects', 'add-project', 'ml-predictions', 'users'],
+    nav: ['dashboard', 'projects', 'add-project', 'ml-predictions', 'users', 'deleted-backups'],
     canAddProject: true,
     canDeleteProject: true,
     canAssignInspector: true,
@@ -44,7 +44,7 @@ export const ROLE_CONFIG = {
     bg: '#f0fdf4',
     border: '#bbf7d0',
     description: 'Read-only access to all government project data',
-    nav: ['dashboard', 'projects'],
+    nav: ['projects'],
     canAddProject: false,
     canDeleteProject: false,
     canAssignInspector: false,
@@ -63,15 +63,15 @@ export function AuthProvider({ children }) {
     }
   });
 
-  const login = async (role, name, password) => {
-    const authenticatedUser = await loginUser({ role, name, password });
+  const login = async (role, name, password, affiliation = 'Public') => {
+    const authenticatedUser = await loginUser({ role, name, password, affiliation });
     setUser(authenticatedUser);
     window.localStorage.setItem('mospi.authenticatedUser', JSON.stringify(authenticatedUser));
     return authenticatedUser;
   };
 
-  const register = async (role, name, password) => {
-    const newUser = await registerUser({ role, name, password });
+  const register = async (role, name, password, affiliation = 'Public') => {
+    const newUser = await registerUser({ role, name, password, affiliation });
     setUser(newUser);
     window.localStorage.setItem('mospi.authenticatedUser', JSON.stringify(newUser));
     return newUser;
@@ -82,16 +82,31 @@ export function AuthProvider({ children }) {
     window.localStorage.removeItem('mospi.authenticatedUser');
   }, []);
 
+  const updateUser = (updatedUser) => {
+    setUser(updatedUser);
+    window.localStorage.setItem('mospi.authenticatedUser', JSON.stringify(updatedUser));
+  };
+
   useEffect(() => {
-    if (!user || user.role !== 'inspector') return undefined;
-    const heartbeat = () => sendAuthHeartbeat(user).catch(() => {});
-    heartbeat();
-    const timer = window.setInterval(heartbeat, 60_000);
+    if (!user) return undefined;
+    const refreshSession = () => {
+      fetchCurrentUser(user)
+        .then(refreshedUser => {
+          if (JSON.stringify(refreshedUser) !== JSON.stringify(user)) {
+            setUser(refreshedUser);
+            window.localStorage.setItem('mospi.authenticatedUser', JSON.stringify(refreshedUser));
+          }
+          if (refreshedUser.role === 'inspector') sendAuthHeartbeat(refreshedUser).catch(() => {});
+        })
+        .catch(() => {});
+    };
+    refreshSession();
+    const timer = window.setInterval(refreshSession, 30_000);
     return () => window.clearInterval(timer);
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout }}>
+    <AuthContext.Provider value={{ user, login, register, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

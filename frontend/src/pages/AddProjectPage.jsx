@@ -202,7 +202,7 @@ export default function AddProjectPage() {
           `Physical completion at ${prog}% requires timeline re-alignment`,
         ],
         recommendedAction: riskLevel === 'High'
-          ? 'Mandatory MoSPI high-level steering committee review within 14 days.'
+          ? 'Mandatory LOGIC CORE high-level steering committee review within 14 days.'
           : 'Schedule field inspection and periodic cash flow audit.',
         projectId: 'PRJ-' + Math.floor(1000 + Math.random() * 900),
       });
@@ -239,11 +239,11 @@ export default function AddProjectPage() {
               borderRadius: '4px',
               textTransform: 'uppercase'
             }}>
-              MoSPI · Form IPMD-01
+              LOGIC CORE · Project Entry
             </span>
           </div>
           <p className="page-subtitle">
-            Enter sanctioned project parameters — MoSPI ML ensemble pipelines evaluate cost and schedule risk
+            Enter sanctioned project parameters — LOGIC CORE ML ensemble pipelines evaluate cost and schedule risk
           </p>
         </div>
       </div>
@@ -328,7 +328,7 @@ export default function AddProjectPage() {
                 disabled={isReadOnly}
               >
                 <option value="">-- Select Inspector (assignable later) --</option>
-                {inspectors.map(i => <option key={i.id} value={i.name}>{i.name}</option>)}
+                {inspectors.map(i => <option key={i.id} value={i.name}>{i.name}{i.is_online ? ' (signed in)' : ' (offline)'}</option>)}
               </select>
             </div>
           </div>
@@ -499,7 +499,7 @@ export default function AddProjectPage() {
           <div className="glass-panel pred-card">
             <div className="pred-header">
               <Brain size={20} style={{ color: '#0a3871' }} />
-              <h3>MoSPI ML Risk Intelligence</h3>
+                <h3>LOGIC CORE ML Risk Intelligence</h3>
             </div>
 
             {!prediction && !submitting && (
@@ -512,7 +512,7 @@ export default function AddProjectPage() {
             {submitting && (
               <div className="pred-loading">
                 <Loader size={32} className="spin-icon" color="#0a3871" />
-                <p>Executing MoSPI ML Risk Pipeline...</p>
+                <p>Executing LOGIC CORE ML Risk Pipeline...</p>
                 <span>XGBoost Regression · Gradient Boosting · Duration & Velocity Features</span>
               </div>
             )}
@@ -604,7 +604,7 @@ export default function AddProjectPage() {
                 'XGBoost Risk Regressor (88.4%)',
                 'Random Forest Classifier (85.2%)',
                 'Gradient Boosting Trees (87.6%)',
-                'MoSPI Historical Benchmark (2006-2025)',
+                'LOGIC CORE Historical Benchmark (2006-2025)',
               ].map(m => (
                 <div key={m} className="model-item">
                   <span className="model-dot"></span>

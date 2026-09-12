@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, Filter, Download, Eye, Trash2, Database, ClipboardList, UserPlus, X, CheckCircle, AlertCircle, MapPin } from 'lucide-react';
-import { API_BASE, authHeaders, deleteProject, updateProjectStatus, assignProjectInspector, fetchInspectors } from '../services/api';
+import { Search, Filter, Download, Eye, Trash2, Database, ClipboardList, UserPlus, X, CheckCircle, AlertCircle, MapPin, Brain, Zap, TrendingUp, Clock, ShieldAlert, MessageSquare, ImagePlus, Send, History } from 'lucide-react';
+import { API_BASE, authHeaders, deleteProject, updateProjectStatus, assignProjectInspector, fetchInspectors, repredictProject, repredictAssignedProjects, fetchProjectComments, addProjectComment, requestAdminAccess, fetchProjectHistory } from '../services/api';
 import { useAuth, ROLE_CONFIG } from '../context/AuthContext';
 import './ProjectsPage.css';
 
@@ -43,8 +43,56 @@ function RiskBar({ score }) {
   );
 }
 
+// ── ML Prediction Result Panel ─────────────────────────────────────────────────
+export function MLResultPanel({ result, onClose }) {
+  const riskColor = result.risk_score > 75 ? '#dc2626' : result.risk_score > 50 ? '#d97706' : '#16a34a';
+  const riskBg = result.risk_score > 75 ? '#fef2f2' : result.risk_score > 50 ? '#fffbeb' : '#f0fdf4';
+  return (
+    <div className="ml-result-panel">
+      <div className="ml-result-header">
+        <span className="ml-result-title"><Brain size={15} /> ML Prediction Results</span>
+        <span className="ml-source-badge">{result.model_source === 'xgboost_pkl' ? '⚡ XGBoost Pipeline' : result.model_source === 'partial_xgboost' ? '⚡ Partial XGBoost' : '📐 Formula Fallback'}</span>
+      </div>
+      <div className="ml-result-kpis">
+        <div className="ml-result-kpi" style={{ background: riskBg, border: `1px solid ${riskColor}22` }}>
+          <ShieldAlert size={16} color={riskColor} />
+          <div className="ml-result-kpi-val" style={{ color: riskColor }}>{result.risk_score}</div>
+          <div className="ml-result-kpi-lbl">Risk Score</div>
+          <div className="ml-result-risk-badge" style={{ background: riskColor, color: '#fff' }}>{result.risk_level}</div>
+        </div>
+        <div className="ml-result-kpi" style={{ background: '#fef2f2', border: '1px solid #dc262622' }}>
+          <TrendingUp size={16} color="#dc2626" />
+          <div className="ml-result-kpi-val" style={{ color: '#dc2626' }}>{(result.cost_overrun_prob * 100).toFixed(0)}%</div>
+          <div className="ml-result-kpi-lbl">Cost Overrun Prob.</div>
+          {result.predicted_cost_overrun_cr > 0 && <div className="ml-result-kpi-sub">+₹{result.predicted_cost_overrun_cr.toLocaleString('en-IN')} Cr</div>}
+        </div>
+        <div className="ml-result-kpi" style={{ background: '#fffbeb', border: '1px solid #d9770622' }}>
+          <Clock size={16} color="#d97706" />
+          <div className="ml-result-kpi-val" style={{ color: '#d97706' }}>{(result.time_delay_prob * 100).toFixed(0)}%</div>
+          <div className="ml-result-kpi-lbl">Delay Probability</div>
+          {result.predicted_delay_months > 0 && <div className="ml-result-kpi-sub">~{result.predicted_delay_months}m delay</div>}
+        </div>
+      </div>
+      {result.top_risk_factors?.length > 0 && (
+        <div className="ml-result-factors">
+          <div className="ml-result-factors-title">Top Risk Factors</div>
+          {result.top_risk_factors.map((f, i) => (
+            <div key={i} className="ml-result-factor-item"><AlertCircle size={12} color="#d97706" /> {f}</div>
+          ))}
+        </div>
+      )}
+      {result.recommended_action && (
+        <div className="ml-result-recommendation">
+          <CheckCircle size={13} color="#16a34a" style={{ flexShrink: 0 }} />
+          <span>{result.recommended_action}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Update Status Modal (Inspector / Admin) ────────────────────────────────────
-function UpdateStatusModal({ project, user, onClose, onSave }) {
+export function UpdateStatusModal({ project, user, onClose, onSave }) {
   const [form, setForm] = useState({
     status: project.status || 'Ongoing',
     project_status: project.project_status || 'Ongoing',
@@ -54,6 +102,25 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const [mlLoading, setMlLoading] = useState(false);
+  const [mlResult, setMlResult] = useState(null);
+  const [mlErr, setMlErr] = useState('');
+  const [runMlPrediction, setRunMlPrediction] = useState(true);
+
+  const handleRunMLPrediction = async () => {
+    setMlLoading(true); setMlErr(''); setMlResult(null);
+    try {
+      const overrides = {};
+      if (form.physical_progress !== '') overrides.physical_progress = parseFloat(form.physical_progress);
+      if (form.revised_completion_date) overrides.revised_completion_date = form.revised_completion_date;
+      const result = await repredictProject(project.id, overrides, user);
+      setMlResult(result);
+    } catch (e) {
+      setMlErr(e.message);
+    } finally {
+      setMlLoading(false);
+    }
+  };
 
   const handleSave = async () => {
     setSaving(true); setErr('');
@@ -64,6 +131,7 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
         physical_progress: parseFloat(form.physical_progress) || undefined,
         revised_completion_date: form.revised_completion_date || undefined,
         inspection_notes: form.inspection_notes || undefined,
+        run_ml_prediction: runMlPrediction,
       }, user);
       onSave(updated);
     } catch (e) {
@@ -75,7 +143,7 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-box" onClick={e => e.stopPropagation()}>
+      <div className="modal-box modal-box--ml" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div>
             <div className="modal-title"><ClipboardList size={17} /> Update Inspection Report</div>
@@ -83,6 +151,12 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
           </div>
           <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
+        {user?.role === 'inspector' && (
+          <div className="inspector-modal-badge">
+            <ClipboardList size={13} />
+            <span>Inspector Field Verification · Automatic XGBoost ML update enabled on submit</span>
+          </div>
+        )}
         <div className="modal-body">
           <div className="modal-row">
             <label>Operational Status</label>
@@ -119,6 +193,40 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
               onChange={e => setForm(p => ({ ...p, inspection_notes: e.target.value }))}
               placeholder="Enter official field inspection remarks, site observations, issues encountered..." />
           </div>
+
+          {/* ── ML Prediction Section ── */}
+          <div className="ml-predict-section">
+            <div className="ml-predict-header">
+              <Brain size={15} />
+              <span>Run ML Prediction on Revised Data</span>
+              <span className="ml-predict-hint">Uses XGBoost models with your updated progress &amp; dates</span>
+            </div>
+            <button
+              type="button"
+              className="ml-predict-btn"
+              onClick={handleRunMLPrediction}
+              disabled={mlLoading}
+            >
+              {mlLoading
+                ? <><span className="ml-spinner" />Running XGBoost Pipeline...</>
+                : <><Zap size={14} /> Run ML Prediction</>}
+            </button>
+            {mlErr && <div className="modal-error" style={{ marginTop: 8 }}><AlertCircle size={13} /> {mlErr}</div>}
+            {mlResult && <MLResultPanel result={mlResult} />}
+          </div>
+
+          <label className="ml-save-toggle">
+            <input
+              type="checkbox"
+              checked={runMlPrediction}
+              onChange={e => setRunMlPrediction(e.target.checked)}
+            />
+            <span>
+              <strong>Run ML prediction again when saving</strong>
+              <small>Recalculate the project risk score using the updated progress and completion date.</small>
+            </span>
+          </label>
+
           {err && <div className="modal-error"><AlertCircle size={14} /> {err}</div>}
         </div>
         <div className="modal-footer">
@@ -127,6 +235,86 @@ function UpdateStatusModal({ project, user, onClose, onSave }) {
             {saving ? 'Saving...' : <><CheckCircle size={14} /> Submit Inspection Report</>}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ProjectHistoryModal({ project, user, onClose }) {
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [history, setHistory] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const loadHistory = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setHistory(await fetchProjectHistory(project.id, user, fromDate, toDate));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadHistory(); }, [project.id]);
+
+  const formatHistoryTimestamp = (value) => {
+    if (!value) return '—';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return new Date(`${value}T00:00:00`).toLocaleDateString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata',
+      });
+    }
+    const utcValue = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value.replace(' ', 'T')}Z`;
+    return new Date(utcValue).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: true, timeZone: 'Asia/Kolkata',
+    });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-box modal-box--ml" onClick={event => event.stopPropagation()} style={{ maxWidth: '980px' }}>
+        <div className="modal-header">
+          <div>
+            <div className="modal-title"><History size={17} /> Project Update History</div>
+            <div className="modal-sub">{project.id} · {project.name}</div>
+          </div>
+          <button className="modal-close" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'end', flexWrap: 'wrap', marginBottom: '16px' }}>
+            <label className="modal-row" style={{ margin: 0 }}><span>From date</span><input type="date" value={fromDate} onChange={event => setFromDate(event.target.value)} /></label>
+            <label className="modal-row" style={{ margin: 0 }}><span>To date</span><input type="date" value={toDate} onChange={event => setToDate(event.target.value)} /></label>
+            <button type="button" className="modal-btn-save" onClick={loadHistory}>Apply Filter</button>
+          </div>
+          {error && <div className="modal-error"><AlertCircle size={14} /> {error}</div>}
+          {loading ? <div className="empty-state">Loading project history...</div> : history.length === 0 ? <div className="empty-state">No history entries match the selected dates.</div> : (
+            <div style={{ display: 'grid', gap: '12px' }}>
+              {history.map(entry => (
+                <article key={entry.id} style={{ border: '1px solid #dbe4ee', borderLeft: '4px solid #1d4ed8', borderRadius: '6px', padding: '12px', background: '#f8fafc' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <strong style={{ color: '#1e3a8a' }}>{entry.event_type.replaceAll('_', ' ')}</strong>
+                    <span style={{ color: '#64748b', fontSize: '0.78rem' }}>{formatHistoryTimestamp(entry.recorded_at)} IST</span>
+                  </div>
+                  <div style={{ color: '#475569', fontSize: '0.78rem', marginBottom: '8px' }}>
+                    By {entry.actor_name} ({entry.actor_role}) · Changed: {entry.changed_fields.join(', ')}
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '6px 12px', fontSize: '0.76rem' }}>
+                    {Object.entries(entry.snapshot).map(([key, value]) => (
+                      <div key={key}><span style={{ color: '#64748b' }}>{key}: </span><strong style={{ color: '#1e293b', wordBreak: 'break-word' }}>{value === null || value === '' ? '—' : String(value)}</strong></div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="modal-footer"><button className="modal-btn-cancel" onClick={onClose}>Close</button></div>
       </div>
     </div>
   );
@@ -196,14 +384,52 @@ function AssignInspectorModal({ project, user, onClose, onSave }) {
 }
 
 // ── View Dossier Modal (Citizen) ───────────────────────────────────────────────
-function DossierModal({ project, onClose }) {
+function DossierModal({ project, user, onClose }) {
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState('');
+  const [commentImage, setCommentImage] = useState(null);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [commentError, setCommentError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setCommentsLoading(true);
+    fetchProjectComments(project.id)
+      .then(data => { if (active) setComments(data); })
+      .catch(() => { if (active) setComments([]); })
+      .finally(() => { if (active) setCommentsLoading(false); });
+    return () => { active = false; };
+  }, [project.id]);
+
+  const handleCommentSubmit = async event => {
+    event.preventDefault();
+    if (!commentText.trim() || !commentImage) {
+      setCommentError('Comment text and an image are both required.');
+      return;
+    }
+    setCommentSubmitting(true);
+    setCommentError('');
+    try {
+      const created = await addProjectComment(project.id, commentText.trim(), commentImage, user);
+      setComments(previous => [created, ...previous]);
+      setCommentText('');
+      setCommentImage(null);
+      event.target.reset();
+    } catch (error) {
+      setCommentError(error.message);
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box modal-box--wide" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <div>
             <div className="modal-title"><Eye size={17} /> Project Dossier</div>
-            <div className="modal-sub">{project.id} · Government of India, IPMD · MoSPI</div>
+            <div className="modal-sub">{project.id} · LOGIC CORE Infrastructure Intelligence</div>
           </div>
           <button className="modal-close" onClick={onClose}><X size={18} /></button>
         </div>
@@ -232,6 +458,46 @@ function DossierModal({ project, onClose }) {
               <div className="dossier-row dossier-row--full"><span>Description</span><strong>{project.description}</strong></div>
             )}
           </div>
+
+          <section className="project-comments-section">
+            <div className="project-comments-heading">
+              <div><MessageSquare size={16} /> Public Comments</div>
+              <span>Anonymous feedback for this project</span>
+            </div>
+            {user?.role === 'user' && (
+              <form className="project-comment-form" onSubmit={handleCommentSubmit}>
+                <textarea
+                  value={commentText}
+                  onChange={event => setCommentText(event.target.value)}
+                  placeholder="Share an observation about this project..."
+                  rows={3}
+                  required
+                />
+                <div className="comment-form-row">
+                  <label className="comment-image-picker">
+                    <ImagePlus size={15} />
+                    <span>{commentImage ? commentImage.name : 'Attach image (required)'}</span>
+                    <input type="file" accept="image/*" onChange={event => setCommentImage(event.target.files?.[0] || null)} required />
+                  </label>
+                  <button type="submit" className="comment-submit-btn" disabled={commentSubmitting}>
+                    {commentSubmitting ? 'Posting...' : <><Send size={14} /> Post Anonymously</>}
+                  </button>
+                </div>
+                {commentError && <div className="modal-error"><AlertCircle size={13} /> {commentError}</div>}
+              </form>
+            )}
+            <div className="project-comments-list">
+              {commentsLoading ? <div className="comments-empty">Loading comments...</div> : comments.length === 0 ? <div className="comments-empty">No comments yet.</div> : comments.map(item => (
+                <article key={item.id} className="project-comment-item">
+                  <img src={`${API_BASE}${item.image_url}`} alt="Anonymous project evidence" />
+                  <div>
+                    <div className="comment-meta">Anonymous Citizen · {new Date(item.created_at).toLocaleString('en-IN')}</div>
+                    <p>{item.comment}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </div>
         <div className="modal-footer">
           <button className="modal-btn-cancel" onClick={onClose}>Close</button>
@@ -246,6 +512,7 @@ export default function ProjectsPage() {
   const { user } = useAuth();
   const role = user?.role || 'user';
   const roleCfg = ROLE_CONFIG[role] || ROLE_CONFIG.user;
+  const isGovernmentViewer = role === 'user' && ['Ministry of Central Govt', 'Ministry of State Govt'].includes(user?.affiliation);
 
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -256,8 +523,40 @@ export default function ProjectsPage() {
   const [myProjectsOnly, setMyProjectsOnly] = useState(false);
 
   const [updateModal, setUpdateModal] = useState(null); // project obj
+  const [historyModal, setHistoryModal] = useState(null); // project obj
   const [assignModal, setAssignModal] = useState(null); // project obj
   const [dossierModal, setDossierModal] = useState(null); // project obj
+  const [repredictingAll, setRepredictingAll] = useState(false);
+  const [inspectorToast, setInspectorToast] = useState('');
+  const [accessRequestSent, setAccessRequestSent] = useState(false);
+
+  const canRequestAdmin = role === 'user' && ['Ministry of Central Govt', 'Ministry of State Govt'].includes(user?.affiliation);
+
+  const handleRequestAccess = async () => {
+    try {
+      await requestAdminAccess(user);
+      setAccessRequestSent(true);
+      setInspectorToast('Admin access request submitted for review.');
+    } catch (err) {
+      setInspectorToast(err.message || 'Could not submit admin access request.');
+    }
+  };
+
+  const handleRepredictAssigned = async () => {
+    setRepredictingAll(true);
+    setInspectorToast('');
+    try {
+      const res = await repredictAssignedProjects(user);
+      setInspectorToast(`⚡ ${res.message}`);
+      loadProjects();
+      setTimeout(() => setInspectorToast(''), 6000);
+    } catch (err) {
+      setInspectorToast(`❌ ${err.message}`);
+      setTimeout(() => setInspectorToast(''), 6000);
+    } finally {
+      setRepredictingAll(false);
+    }
+  };
 
   const loadProjects = useCallback(() => {
     setLoading(true);
@@ -311,7 +610,7 @@ export default function ProjectsPage() {
     const csv = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows].join('\n');
     const a = document.createElement('a');
     a.href = encodeURI(csv);
-    a.download = `MoSPI_Projects_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `LOGIC_CORE_Projects_${new Date().toISOString().slice(0,10)}.csv`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
   };
 
@@ -319,19 +618,37 @@ export default function ProjectsPage() {
     const s = search.toLowerCase();
     const matchSearch = p.name.toLowerCase().includes(s) || p.id.toLowerCase().includes(s) || (p.location||'').toLowerCase().includes(s);
     const matchStatus = filterStatus === 'All' || p.status === filterStatus;
+    if (role === 'inspector' && myProjectsOnly) {
+      const isAssigned = p.assigned_officer_id === user?.id ||
+        p.assigned_inspector_id === user?.id ||
+        (p.assigned_inspector || '').toLowerCase() === (user?.name || '').toLowerCase() ||
+        !p.assigned_inspector ||
+        (p.assigned_inspector || '').toLowerCase() === 'unassigned' ||
+        (p.assigned_inspector || '').toLowerCase() === 'none';
+      if (!isAssigned) return false;
+    }
     return matchSearch && matchStatus;
   });
 
   return (
     <div className="page-container">
-      {/* Citizen banner */}
-      {role === 'user' && (
+      {/* Viewer access banner */}
+      {role === 'user' && !isGovernmentViewer && (
         <div className="citizen-banner">
           <Eye size={16} />
           <span>
             <strong>Public Citizen Portal</strong> — You have read-only access to monitor Government of India infrastructure projects.
-            No edit or deletion rights. Data sourced from IPMD, MoSPI.
+            No edit or deletion rights. Data sourced from LOGIC CORE Infrastructure Intelligence.
           </span>
+        </div>
+      )}
+
+      {canRequestAdmin && (
+        <div className="citizen-banner" style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', justifyContent: 'space-between' }}>
+          <span><strong>Government Viewer</strong> — request Admin approval to manage project records.</span>
+          <button type="button" onClick={handleRequestAccess} disabled={accessRequestSent} style={{ padding: '7px 12px', border: '1px solid #b45309', borderRadius: '4px', background: accessRequestSent ? '#fef3c7' : '#b45309', color: accessRequestSent ? '#92400e' : '#fff', cursor: accessRequestSent ? 'default' : 'pointer', fontWeight: 700 }}>
+            {accessRequestSent ? 'Request Pending' : 'Request Admin Access'}
+          </button>
         </div>
       )}
 
@@ -345,14 +662,14 @@ export default function ProjectsPage() {
               <Database size={13} /> {projects.length} Entries
             </span>
           </div>
-          <p className="page-subtitle">Showing {filtered.length} of {projects.length} projects registered under IPMD monitoring</p>
+          <p className="page-subtitle">Showing {filtered.length} of {projects.length} projects registered under LOGIC CORE monitoring</p>
         </div>
         <button className="btn-export" onClick={handleExportCSV} type="button">
           <Download size={15} /> Export Official CSV
         </button>
       </div>
 
-      {/* Inspector: My Projects toggle */}
+      {/* Inspector: My Projects & ML Re-predict controls */}
       {role === 'inspector' && (
         <div className="inspector-toggle-row">
           <button
@@ -363,6 +680,26 @@ export default function ProjectsPage() {
             <ClipboardList size={14} />
             {myProjectsOnly ? 'Showing: My Assigned Projects' : 'Show Only My Assigned Projects'}
           </button>
+
+          <button
+            type="button"
+            className="inspector-ml-btn"
+            onClick={handleRepredictAssigned}
+            disabled={repredictingAll}
+            title="Run XGBoost ML prediction pipeline across all assigned projects to update risk scores and overrun/delay probabilities"
+          >
+            {repredictingAll ? (
+              <><span className="ml-spinner" /> Updating ML Predictions...</>
+            ) : (
+              <><Zap size={14} /> Update ML Predictions for Assigned Projects</>
+            )}
+          </button>
+
+          {inspectorToast && (
+            <div className="inspector-toast animate-fade-in">
+              {inspectorToast}
+            </div>
+          )}
         </div>
       )}
 
@@ -473,6 +810,12 @@ export default function ProjectsPage() {
                           </button>
                         )}
 
+                        {roleCfg.canUpdateStatus && (
+                          <button type="button" onClick={() => setHistoryModal(p)} className="action-btn action-btn--view" title="View complete project update history">
+                            <History size={12} /> History
+                          </button>
+                        )}
+
                         {/* Assign Inspector – admin only */}
                         {roleCfg.canAssignInspector && (
                           <button type="button" onClick={() => setAssignModal(p)} className="action-btn action-btn--assign" title="Assign Inspector Officer">
@@ -495,7 +838,11 @@ export default function ProjectsPage() {
           </tbody>
         </table>
         {!loading && filtered.length === 0 && (
-          <div className="empty-table">No projects match the selected criteria.</div>
+          <div className="empty-table">
+            {role === 'inspector' && projects.length === 0
+              ? 'No projects assigned'
+              : 'No projects match the selected criteria.'}
+          </div>
         )}
       </div>
 
@@ -511,6 +858,14 @@ export default function ProjectsPage() {
           }}
         />
       )}
+
+      {historyModal && (
+        <ProjectHistoryModal
+          project={historyModal}
+          user={user}
+          onClose={() => setHistoryModal(null)}
+        />
+      )}
       {assignModal && (
         <AssignInspectorModal
           project={assignModal}
@@ -523,7 +878,7 @@ export default function ProjectsPage() {
         />
       )}
       {dossierModal && (
-        <DossierModal project={dossierModal} onClose={() => setDossierModal(null)} />
+        <DossierModal project={dossierModal} user={user} onClose={() => setDossierModal(null)} />
       )}
     </div>
   );

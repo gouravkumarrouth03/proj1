@@ -4,7 +4,7 @@ import StatCard from '../components/StatCard';
 import RiskAlerts from '../components/RiskAlerts';
 import ProjectTable from '../components/ProjectTable';
 import AIPredictionWidget from '../components/AIPredictionWidget';
-import { API_BASE, authHeaders } from '../services/api';
+import { API_BASE, authHeaders, requestAdminAccess } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import './DashboardPage.css';
 
@@ -50,21 +50,44 @@ export default function DashboardPage() {
     ? (((revCost - origCost) / origCost) * 100).toFixed(1)
     : '0.0';
 
+  const isMinistry = user?.affiliation === 'Ministry of Central Govt' || user?.affiliation === 'Ministry of State Govt';
+
+  const handleRequestAccess = async () => {
+    try {
+      await requestAdminAccess(user);
+      alert('Admin access request submitted successfully.');
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="page-container">
       <div className="page-header">
         <div>
           <div className="page-title-row">
             <h2 className="page-title">Executive Infrastructure Dashboard</h2>
-            <span className="gov-section-badge">IPMD · MoSPI</span>
+            <span className="gov-section-badge">LOGIC CORE</span>
           </div>
           <p className="page-subtitle">
             Centralized monitoring of Central Sector Infrastructure Projects (₹150 Crore & above)
           </p>
         </div>
         <div className="page-date-badge">
-          <span>Official Data Cycle:</span>
-          <strong>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+            <div>
+              <span>Official Data Cycle:</span>
+              <strong>{new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</strong>
+            </div>
+            {user?.role !== 'admin' && isMinistry && (
+              <button 
+                onClick={handleRequestAccess} 
+                style={{ padding: '6px 12px', background: '#0a3871', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
+              >
+                Request Admin Access
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

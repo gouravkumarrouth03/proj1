@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Users, Shield, User, Database, Plus, Trash2, CheckCircle2, AlertCircle, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { fetchUsers, createUser, deleteUser, fetchDatabaseStats } from '../services/api';
+import { fetchUsers, createUser, deleteUser, fetchDatabaseStats, fetchAccessRequests, approveAccessRequest, rejectAccessRequest } from '../services/api';
 import './UserManagementPage.css';
 
 export default function UserManagementPage() {
   const { user } = useAuth();
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState(null);
+
+  const [accessRequests, setAccessRequests] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
   const [role, setRole] = useState('user');
@@ -18,12 +21,14 @@ export default function UserManagementPage() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [uList, dbStats] = await Promise.all([
+      const [uList, dbStats, aReqs] = await Promise.all([
         fetchUsers(user),
         fetchDatabaseStats(user),
+        fetchAccessRequests(user),
       ]);
       setUsers(uList);
       setStats(dbStats);
+      setAccessRequests(aReqs);
     } catch (e) {
       console.error('Error loading user/db data:', e);
     } finally {
@@ -54,6 +59,27 @@ export default function UserManagementPage() {
     }
   };
 
+  
+  const handleApprove = async (id) => {
+    try {
+      await approveAccessRequest(id, user);
+      setMessage({ type: 'success', text: 'Request approved successfully.' });
+      loadData();
+    } catch (e) {
+      setMessage({ type: 'error', text: e.message });
+    }
+  };
+
+  const handleReject = async (id) => {
+    try {
+      await rejectAccessRequest(id, user);
+      setMessage({ type: 'success', text: 'Request rejected.' });
+      loadData();
+    } catch (e) {
+      setMessage({ type: 'error', text: e.message });
+    }
+  };
+
   const handleDeleteUser = async (account) => {
     if (account.name === 'Administrator' && account.role === 'admin') {
       alert('Cannot delete default system Administrator account.');
@@ -71,6 +97,7 @@ export default function UserManagementPage() {
       setMessage({ type: 'error', text: err.message || 'Could not delete user.' });
     }
   };
+
 
   return (
     <div className="page-container">
@@ -287,8 +314,59 @@ export default function UserManagementPage() {
               </tbody>
             </table>
           </div>
+              
+        {/* Access Requests Table */}
+        <div className="glass-panel user-table-card" style={{ gridColumn: '1 / -1', marginTop: '20px' }}>
+          <h3 className="panel-h" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>Ministry Admin Access Requests</span>
+            <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#64748b' }}>{accessRequests.length} Total</span>
+          </h3>
+
+          <div className="table-responsive">
+            <table className="user-db-table">
+              <thead>
+                <tr>
+                  <th>User Name</th>
+                  <th>Affiliation</th>
+                  <th>Status</th>
+                  <th>Requested Date</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Loading...</td></tr>
+                  ) : accessRequests.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>No admin access requests.</td></tr>
+                ) : (
+                  accessRequests.map(req => (
+                    <tr key={req.id}>
+                      <td>
+                        <div className="user-full-name">{req.user_name}</div>
+                        <div className="user-meta">{req.user_email}</div>
+                      </td>
+                      <td>{req.affiliation}</td>
+                      <td style={{ textTransform: 'capitalize', color: req.status === 'approved' ? '#15803d' : req.status === 'rejected' ? '#b91c1c' : '#b45309', fontWeight: 700 }}>{req.status}</td>
+                      <td>{new Date(req.created_at).toLocaleDateString()}</td>
+                      <td style={{ textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                        {req.status === 'pending' ? (
+                          <>
+                            <button onClick={() => handleApprove(req.id)} style={{ padding: '4px 8px', background: '#16a34a', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Approve</button>
+                            <button onClick={() => handleReject(req.id)} style={{ padding: '4px 8px', background: '#dc2626', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Reject</button>
+                          </>
+                        ) : <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Resolved</span>}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+</div>
       </div>
+
     </div>
   );
 }

@@ -110,7 +110,7 @@ export default function UsersPage() {
                   </div>
                   <div className="form-group">
                     <label>Email</label>
-                    <input required type="email" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} placeholder="user@mospi.gov.in" />
+                    <input required type="email" value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} placeholder="user@example.com" />
                   </div>
                   <div className="form-group">
                     <label>Role</label>

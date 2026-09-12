@@ -44,7 +44,7 @@ export default function AIPredictionWidget({ projects }) {
       <div className="ai-widget-header">
         <div className="ai-badge">
           <Brain size={14} />
-          <span>MoSPI ML Engine</span>
+          <span>LOGIC CORE ML Engine</span>
         </div>
         <h3>Portfolio Risk Snapshot</h3>
         <p className="panel-subtitle">Aggregate ML predictions across monitored projects</p>
@@ -93,7 +93,7 @@ export default function AIPredictionWidget({ projects }) {
 
       <div className="model-info">
         <span className="model-tag"><Cpu size={12} /> XGBoost Ensemble Pipeline</span>
-        <span className="model-accuracy">MoSPI Validated</span>
+        <span className="model-accuracy">LOGIC CORE Validated</span>
       </div>
     </div>
   );

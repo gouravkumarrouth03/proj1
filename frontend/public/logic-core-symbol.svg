@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">Logic Core symbol</title>
+  <desc id="desc">A colorful technology gear surrounding the letters LC with an upward orange arrow.</desc>
+  <defs>
+    <linearGradient id="core-gradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22c7ef"/>
+      <stop offset="0.52" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#16a34a"/>
+    </linearGradient>
+  </defs>
+  <path fill="#123b78" d="M64 7h32l4 16a57 57 0 0 1 14 6l13-10 23 23-10 13a57 57 0 0 1 6 14l16 4v32l-16 4a57 57 0 0 1-6 14l10 13-23 23-13-10a57 57 0 0 1-14 6l-4 16H64l-4-16a57 57 0 0 1-14-6l-13 10-23-23 10-13a57 57 0 0 1-6-14L-2 105V73l16-4a57 57 0 0 1 6-14L10 42 33 19l13 10a57 57 0 0 1 14-6z" transform="translate(2 0)"/>
+  <circle cx="80" cy="80" r="48" fill="#f8fafc" stroke="url(#core-gradient)" stroke-width="9"/>
+  <path d="M44 91c16-2 25-12 25-29V42h13v25c0 16-7 28-20 36" fill="none" stroke="#22c7ef" stroke-width="8" stroke-linecap="round"/>
+  <path d="M91 116V58l22-23" fill="none" stroke="#16a34a" stroke-width="8" stroke-linecap="round"/>
+  <path d="m107 37 13-3-3 13" fill="none" stroke="#f6a23a" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="69" cy="42" r="5" fill="#f6a23a"/>
+  <circle cx="44" cy="91" r="5" fill="#22c7ef"/>
+  <circle cx="91" cy="116" r="5" fill="#16a34a"/>
+  <text x="78" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="39" font-weight="800" fill="#123b78">LC</text>
+</svg>

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   MoSPI IPMD Portal - Attractive Government Login Page
+  LOGIC CORE Infrastructure Intelligence Portal
    ========================================================================== */
 
 .login-root {
@@ -148,6 +148,12 @@
   margin-bottom: 20px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   backdrop-filter: blur(10px);
+}
+
+.logic-core-login-symbol {
+  width: 76px;
+  height: 76px;
+  object-fit: contain;
 }
 
 .crest-symbol {

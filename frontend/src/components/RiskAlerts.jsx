@@ -26,7 +26,7 @@ export default function RiskAlerts({ alerts, loading }) {
       <div className="panel-header">
         <div>
           <h3>Early Warning Risk Alerts</h3>
-          <p className="panel-subtitle">Automated signals from MoSPI ML inference</p>
+          <p className="panel-subtitle">Automated signals from LOGIC CORE ML inference</p>
         </div>
         <span className="badge badge-danger">{alerts.length} Active</span>
       </div>

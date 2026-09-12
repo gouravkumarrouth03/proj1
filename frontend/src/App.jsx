@@ -7,6 +7,7 @@ import ProjectsPage from './pages/ProjectsPage';
 import AddProjectPage from './pages/AddProjectPage';
 import MLPredictionsPage from './pages/MLPredictionsPage';
 import UserManagementPage from './pages/UserManagementPage';
+import DeletedProjectBackupsPage from './pages/DeletedProjectBackupsPage';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import './App.css';
@@ -15,6 +16,14 @@ function MainApp() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (user?.role === 'user') {
+      setActiveTab('projects');
+    } else if (user) {
+      setActiveTab('dashboard');
+    }
+  }, [user]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -46,6 +55,10 @@ function MainApp() {
   };
 
   const renderActivePage = () => {
+    if (user.role === 'user' && activeTab !== 'projects') {
+      return <ProjectsPage key={refreshKey} />;
+    }
+
     switch (activeTab) {
       case 'dashboard':
         return <DashboardPage key={refreshKey} />;
@@ -57,6 +70,8 @@ function MainApp() {
         return <MLPredictionsPage key={refreshKey} />;
       case 'users':
         return <UserManagementPage key={refreshKey} />;
+      case 'deleted-backups':
+        return user.role === 'admin' ? <DeletedProjectBackupsPage key={refreshKey} /> : <ProjectsPage key={refreshKey} />;
       default:
         return <DashboardPage key={refreshKey} />;
     }
@@ -79,12 +94,12 @@ function MainApp() {
               <div className="gov-footer-branding">
                 <div className="gov-footer-emblem">🏛️</div>
                 <div>
-                  <h4>Infrastructure & Project Monitoring Division (IPMD)</h4>
-                  <p>Ministry of Statistics & Programme Implementation (MoSPI) · Government of India</p>
+                  <h4>LOGIC CORE Infrastructure Intelligence</h4>
+                  <p>Infrastructure Monitoring &amp; Intelligence Platform</p>
                 </div>
               </div>
               <div className="gov-footer-links">
-                <a href="https://mospi.gov.in" target="_blank" rel="noreferrer">MoSPI Portal</a>
+                <a href="#" onClick={event => event.preventDefault()}>LOGIC CORE Portal</a>
                 <span>•</span>
                 <a href="https://data.gov.in" target="_blank" rel="noreferrer">Open Data (data.gov.in)</a>
                 <span>•</span>
@@ -96,7 +111,7 @@ function MainApp() {
 
             <div className="gov-footer-bottom">
               <p>
-                Website Content Managed by Infrastructure & Project Monitoring Division (IPMD), MoSPI, Government of India.
+                Website Content Managed by LOGIC CORE Infrastructure Intelligence.
               </p>
               <p className="gov-footer-sub">
                 Designed, Developed & Hosted by <strong>National Informatics Centre (NIC)</strong> · Last Updated: 11 September 2026 · Compliant with GIGW 3.0

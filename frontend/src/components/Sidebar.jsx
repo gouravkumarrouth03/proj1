@@ -5,6 +5,7 @@ import {
   PlusCircle,
   Brain,
   Users,
+  ArchiveRestore,
   LogOut,
   Shield,
   ClipboardList,
@@ -22,6 +23,7 @@ const NAV_ITEMS_ALL = {
     { id: 'add-project', label: 'Add Project Entry', icon: PlusCircle },
     { id: 'ml-predictions', label: 'ML Risk Analytics', icon: Brain },
     { id: 'users', label: 'User Registry', icon: Users },
+    { id: 'deleted-backups', label: 'Deleted Project Backups', icon: ArchiveRestore },
   ],
   hi: [
     { id: 'dashboard', label: 'कार्यकारी डैशबोर्ड', icon: LayoutDashboard },
@@ -29,6 +31,7 @@ const NAV_ITEMS_ALL = {
     { id: 'add-project', label: 'नई परियोजना प्रविष्टि', icon: PlusCircle },
     { id: 'ml-predictions', label: 'जोखिम विश्लेषण', icon: Brain },
     { id: 'users', label: 'प्रयोक्ता रजिस्ट्री', icon: Users },
+    { id: 'deleted-backups', label: 'हटाए गए प्रोजेक्ट बैकअप', icon: ArchiveRestore },
   ],
 };
 
@@ -87,8 +90,9 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   const allItems = NAV_ITEMS_ALL[language] || NAV_ITEMS_ALL.en;
 
   const RoleIcon = getRoleIcon(role);
-  const roleTitle = t.roleTitles[role] || role;
-  const roleClearance = t.clearances[role] || '';
+  const isGovernmentViewer = role === 'user' && ['Ministry of Central Govt', 'Ministry of State Govt'].includes(user?.affiliation);
+  const roleTitle = isGovernmentViewer ? 'Government Viewer' : (t.roleTitles[role] || role);
+  const roleClearance = isGovernmentViewer ? `${user.affiliation} · Read-only Access` : (t.clearances[role] || '');
 
   const allowedNav = roleCfg.nav || ['dashboard', 'projects'];
   const visibleItems = allItems.filter(item => allowedNav.includes(item.id));
@@ -98,14 +102,14 @@ export default function Sidebar({ activeTab, setActiveTab }) {
       <div className="tricolor-strip"></div>
 
       <div className="sidebar-header">
-        <div className="logo" onClick={() => setActiveTab('dashboard')} style={{ cursor: 'pointer' }}>
+        <div className="logo" onClick={() => setActiveTab(role === 'user' ? 'projects' : 'dashboard')} style={{ cursor: 'pointer' }}>
           <div className="emblem-box">
-            <span className="emblem-symbol">🏛️</span>
+            <img className="logic-core-symbol" src="/logic-core-symbol.svg" alt="Logic Core" />
           </div>
           <div className="logo-text">
             <span className="gov-authority-text">{t.govtBadge}</span>
-            <h2>MoSPI <span className="text-gradient">IPMD</span></h2>
-            <span className="gov-sub">{t.divisionBadge}</span>
+            <h2>LOGIC <span className="text-gradient">CORE</span></h2>
+            <span className="gov-sub">Infrastructure Intelligence</span>
           </div>
         </div>
       </div>
@@ -120,10 +124,17 @@ export default function Sidebar({ activeTab, setActiveTab }) {
         </div>
       </div>
 
-      {role === 'user' && (
+      {role === 'user' && !isGovernmentViewer && (
         <div style={{ margin: '0 12px 10px', padding: '8px 10px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '6px', fontSize: '0.7rem', color: '#15803d', display: 'flex', alignItems: 'flex-start', gap: '6px', lineHeight: 1.4 }}>
           <Eye size={13} style={{ marginTop: '1px', flexShrink: 0 }} />
           <span>Public Transparency Portal – Read-only access to government infrastructure data</span>
+        </div>
+      )}
+
+      {isGovernmentViewer && (
+        <div style={{ margin: '0 12px 10px', padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '6px', fontSize: '0.7rem', color: '#92400e', display: 'flex', alignItems: 'flex-start', gap: '6px', lineHeight: 1.4 }}>
+          <Eye size={13} style={{ marginTop: '1px', flexShrink: 0 }} />
+          <span>{user.affiliation} Viewer – Read-only until Admin access is approved</span>
         </div>
       )}
 

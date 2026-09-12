@@ -39,7 +39,7 @@ export default function ProjectTable({ projects, loading }) {
       <div className="panel-header">
         <div>
           <h3>High Priority Monitored Projects</h3>
-          <p className="panel-subtitle">Ranked by MoSPI ML Composite Risk Index (highest first)</p>
+          <p className="panel-subtitle">Ranked by LOGIC CORE ML Composite Risk Index (highest first)</p>
         </div>
       </div>
       <div className="table-container">
