@@ -4,6 +4,7 @@ import StatCard from '../components/StatCard';
 import RiskAlerts from '../components/RiskAlerts';
 import ProjectTable from '../components/ProjectTable';
 import AIPredictionWidget from '../components/AIPredictionWidget';
+import AdminAccessRequestModal from '../components/AdminAccessRequestModal';
 import { API_BASE, authHeaders, requestAdminAccess, fetchNotifications, fetchAdminAccessStatus } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import './DashboardPage.css';
@@ -15,6 +16,8 @@ export default function DashboardPage() {
   const [alerts, setAlerts] = useState([]);
   const [accessStatus, setAccessStatus] = useState(null);
   const [requestState, setRequestState] = useState('none');
+  const [showAccessRequestModal, setShowAccessRequestModal] = useState(false);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -89,12 +92,16 @@ export default function DashboardPage() {
   }, [accessStatus]);
 
   const handleRequestAccess = async () => {
+    setRequestSubmitting(true);
     try {
       await requestAdminAccess(user);
       setRequestState('pending');
-      alert('Admin access request submitted successfully.');
+      setShowAccessRequestModal(false);
+      window.alert('Admin access request submitted successfully.');
     } catch (err) {
-      alert(err.message);
+      window.alert(err.message);
+    } finally {
+      setRequestSubmitting(false);
     }
   };
 
@@ -156,7 +163,7 @@ export default function DashboardPage() {
             </div>
             {user?.role !== 'admin' && isMinistry && (
               <button 
-                onClick={handleRequestAccess}
+                onClick={() => setShowAccessRequestModal(true)}
                 disabled={requestState === 'pending'}
                 style={{ padding: '6px 12px', background: requestState === 'pending' ? '#cbd5e1' : requestState === 'rejected' ? '#b91c1c' : '#0a3871', color: requestState === 'pending' ? '#475569' : 'white', border: 'none', borderRadius: '4px', cursor: requestState === 'pending' ? 'not-allowed' : 'pointer', fontSize: '0.85rem' }}
               >
@@ -166,6 +173,15 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {showAccessRequestModal && (
+        <AdminAccessRequestModal
+          affiliation={user.affiliation}
+          submitting={requestSubmitting}
+          onConfirm={handleRequestAccess}
+          onClose={() => !requestSubmitting && setShowAccessRequestModal(false)}
+        />
+      )}
 
       <div className="stat-cards-grid">
         <StatCard

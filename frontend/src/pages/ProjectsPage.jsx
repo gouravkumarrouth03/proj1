@@ -3,6 +3,7 @@ import { Search, Filter, Download, Eye, Trash2, Database, ClipboardList, UserPlu
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { API_BASE, authHeaders, deleteProject, updateProjectStatus, assignProjectInspector, fetchInspectors, repredictProject, repredictAssignedProjects, fetchProjectComments, addProjectComment, requestAdminAccess, fetchProjectHistory, fetchAdminAccessStatus } from '../services/api';
 import { useAuth, ROLE_CONFIG } from '../context/AuthContext';
+import AdminAccessRequestModal from '../components/AdminAccessRequestModal';
 import './ProjectsPage.css';
 
 const INDIAN_STATES = [
@@ -629,6 +630,8 @@ export default function ProjectsPage() {
   const [repredictingAll, setRepredictingAll] = useState(false);
   const [inspectorToast, setInspectorToast] = useState('');
   const [accessRequestState, setAccessRequestState] = useState('none');
+  const [showAccessRequestModal, setShowAccessRequestModal] = useState(false);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
 
   useEffect(() => {
     if (!user || user.role !== 'user') return;
@@ -648,12 +651,16 @@ export default function ProjectsPage() {
   }, [showRejectedAccessState]);
 
   const handleRequestAccess = async () => {
+    setRequestSubmitting(true);
     try {
       await requestAdminAccess(user);
       setAccessRequestState('pending');
+      setShowAccessRequestModal(false);
       setInspectorToast('Admin access request submitted for review.');
     } catch (err) {
       setInspectorToast(err.message || 'Could not submit admin access request.');
+    } finally {
+      setRequestSubmitting(false);
     }
   };
 
@@ -770,7 +777,7 @@ export default function ProjectsPage() {
           </span>
           <button
             type="button"
-            onClick={handleRequestAccess}
+            onClick={() => setShowAccessRequestModal(true)}
             disabled={showPendingAccessState}
             style={{
               padding: '7px 12px',
@@ -785,6 +792,15 @@ export default function ProjectsPage() {
             {showPendingAccessState ? 'Approval Pending' : showRejectedAccessState ? 'Admin Request Rejected' : 'Request Admin Access'}
           </button>
         </div>
+      )}
+
+      {showAccessRequestModal && (
+        <AdminAccessRequestModal
+          affiliation={user.affiliation}
+          submitting={requestSubmitting}
+          onConfirm={handleRequestAccess}
+          onClose={() => !requestSubmitting && setShowAccessRequestModal(false)}
+        />
       )}
 
       <div className="page-header">
