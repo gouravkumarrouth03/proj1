@@ -107,13 +107,13 @@ export default function MLPredictionsPage() {
               borderRadius: '4px',
               textTransform: 'uppercase'
             }}>
-              LOGIC CORE ML Engine
+              ML-MAYANK Risk Engine
             </span>
           </div>
           <p className="page-subtitle">
             {role === 'inspector'
-              ? 'Real-time XGBoost risk predictions on inspector-assigned project parameters and revised field milestone data'
-              : 'AI/ML risk scores, cost overrun forecasts & delay estimations across monitored projects'}
+              ? 'Real-time ML-MAYANK risk predictions on inspector-assigned project parameters and revised field milestone data'
+              : 'ML-MAYANK risk scores with legacy cost overrun forecasts and delay estimations across monitored projects'}
           </p>
         </div>
 

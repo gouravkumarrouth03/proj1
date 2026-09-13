@@ -46,12 +46,14 @@ COMMENT_UPLOADS_DIR = DATABASE_PATH.parent / "comment_uploads"
 COMMENT_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 MODELS_DIR = Path(__file__).parent.parent  # project root where .pkl files live
 
-COST_MODEL_PATH = MODELS_DIR / "xgboost_cost_overrun_model.pkl"
-DELAY_MODEL_PATH = MODELS_DIR / "xgboost_delay_model_enhanced.pkl"
+MAYANK_MODEL_PATH = MODELS_DIR / "ml-mayank" / "risk_model_v2.joblib"
+MAYANK_CONFIG_PATH = MODELS_DIR / "ml-mayank" / "feature_config_v2.json"
 
 # ── Load trained models at startup ─────────────────────────────────────────────
 cost_model = None
 delay_model = None
+mayank_model = None
+mayank_config = None
 
 if ML_AVAILABLE:
     # Compatibility shim for unpickling pipelines across sklearn versions
@@ -65,16 +67,14 @@ if ML_AVAILABLE:
         pass
 
     try:
-        cost_model = joblib.load(COST_MODEL_PATH)
-        logging.info(f"✅ Cost overrun model loaded from {COST_MODEL_PATH}")
+        with MAYANK_CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+            mayank_config = json.load(config_file)
+        mayank_model = joblib.load(MAYANK_MODEL_PATH)
+        logging.info(f"✅ ML-MAYANK risk model loaded from {MAYANK_MODEL_PATH}")
     except Exception as e:
-        logging.error(f"❌ Could not load cost overrun model: {e}")
-
-    try:
-        delay_model = joblib.load(DELAY_MODEL_PATH)
-        logging.info(f"✅ Delay model loaded from {DELAY_MODEL_PATH}")
-    except Exception as e:
-        logging.error(f"❌ Could not load delay model: {e}")
+        logging.error(f"❌ Could not load ML-MAYANK risk model: {e}")
+        mayank_model = None
+        mayank_config = None
 
 # ── Hilly states list (matches notebook exactly) ───────────────────────────────
 HILLY_STATES = {
@@ -539,6 +539,93 @@ def get_local_disruption_risk(state: str, sector: str) -> dict:
 
 
 # ── Real ML prediction ─────────────────────────────────────────────────────────
+def _months_between(start_value: Optional[str], end_value: Optional[str]) -> float:
+    if not start_value or not end_value:
+        return 0.0
+    try:
+        start = datetime.fromisoformat(str(start_value).replace("Z", "+00:00")).replace(tzinfo=None)
+        end = datetime.fromisoformat(str(end_value).replace("Z", "+00:00")).replace(tzinfo=None)
+        return max(0.0, (end - start).days / 30.4375)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _mayank_feature_values(
+    orig_cost: float,
+    rev_cost: float,
+    exp: float,
+    progress: float,
+    agency: Optional[str],
+    start_date: Optional[str],
+    approval_date: Optional[str],
+    end_date: Optional[str],
+    project_id: Optional[str] = None,
+) -> dict:
+    defaults = (mayank_config or {}).get("default_fill_values", {})
+    features = dict(defaults)
+    history = []
+    if project_id:
+        try:
+            with closing(get_connection()) as connection:
+                history_rows = connection.execute(
+                    "SELECT snapshot FROM project_update_history WHERE project_id = ? ORDER BY recorded_at ASC, id ASC",
+                    (project_id,),
+                ).fetchall()
+            history = [json.loads(item["snapshot"]) for item in history_rows]
+        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+            history = []
+
+    previous = history[-1] if history else None
+    two_back = history[-2] if len(history) > 1 else None
+    previous_progress = float(previous.get("physical_progress") or 0.0) if previous else progress
+    two_back_progress = float(two_back.get("physical_progress") or 0.0) if two_back else previous_progress
+    previous_exp = float(previous.get("expenditure") or 0.0) if previous else exp
+    recent_change = progress - previous_progress if history else 0.0
+    two_month_change = progress - two_back_progress if len(history) > 1 else recent_change
+    expenditure_change = max(0.0, exp - previous_exp) if history else 0.0
+    current_date = datetime.utcnow().date()
+    months_since_approval = _months_between(approval_date, current_date.isoformat())
+    months_to_commissioning = _months_between(current_date.isoformat(), end_date)
+    schedule_delay_months = _months_between(end_date, start_date) if end_date and start_date and end_date < start_date else 0.0
+    remaining_months = max(1.0, months_to_commissioning)
+    actual_velocity = recent_change
+    required_velocity = max(0.0, (100.0 - progress) / remaining_months)
+    agency_frequency = 1.0
+    try:
+        with closing(get_connection()) as connection:
+            agency_frequency = float(connection.execute(
+                "SELECT COUNT(*) FROM projects WHERE lower(COALESCE(agency, '')) = lower(?)",
+                (agency or "",),
+            ).fetchone()[0] or 1)
+    except sqlite3.Error:
+        pass
+
+    features.update({
+        "physical_progress_pct": min(100.0, max(0.0, progress)),
+        "progress_change_1m": max(-100.0, min(100.0, recent_change)),
+        "progress_change_2m": max(-100.0, min(100.0, two_month_change)),
+        "recent_progress_stalled": int(recent_change <= 0),
+        "is_first_report": int(len(history) <= 1),
+        "expenditure_ratio": max(0.0, exp / max(rev_cost, 1e-6)),
+        "expenditure_change_1m": expenditure_change,
+        "cost_overrun_pct": (rev_cost - orig_cost) / max(orig_cost, 1e-6),
+        "cost_overrun_crore": max(0.0, rev_cost - orig_cost),
+        "progress_spend_divergence": (exp / max(rev_cost, 1e-6) * 100.0) - progress,
+        "months_since_approval": months_since_approval,
+        "months_to_commissioning": months_to_commissioning,
+        "is_overdue": int(months_to_commissioning == 0 and end_date is not None),
+        "schedule_delay_months": schedule_delay_months,
+        "required_monthly_velocity": required_velocity,
+        "velocity_gap": required_velocity - actual_velocity,
+        "log_revised_cost": float(np.log1p(max(0.0, rev_cost))),
+        "log_expenditure": float(np.log1p(max(0.0, exp))),
+        "is_mega_project": int(rev_cost >= 1000),
+        "agency_freq": agency_frequency,
+        "month_num": current_date.month,
+    })
+    return {feature: features.get(feature, 0.0) for feature in (mayank_config or {}).get("features", features.keys())}
+
+
 def run_real_ml_prediction(
     orig_cost: float,
     rev_cost: float,
@@ -549,12 +636,15 @@ def run_real_ml_prediction(
     state: str = "Maharashtra",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    project_id: Optional[str] = None,
+    approval_date: Optional[str] = None,
+    agency: Optional[str] = None,
 ) -> MLPredictionResult:
     """
     Run inference using the two trained XGBoost pipelines.
     Falls back to formula if models are unavailable.
     """
-    if not ML_AVAILABLE or (cost_model is None and delay_model is None):
+    if not ML_AVAILABLE or mayank_model is None or mayank_config is None:
         return _formula_fallback(orig_cost, rev_cost, exp, progress, sector)
 
     # ── Derive engineered features ─────────────────────────────────────────
@@ -657,11 +747,39 @@ def run_real_ml_prediction(
     else:
         time_delay_prob = round(min(0.95, max(0.10, (1 - (progress / 100)) * 0.6 + (cost_overrun_pct / 100) * 0.2)), 2)
 
-    # Risk score: blended from both model outputs
-    raw_risk = (cost_overrun_prob * 55) + (time_delay_prob * 45)
+    mayank_probability = None
+    mayank_values = {}
+    if mayank_model is not None and mayank_config:
+        try:
+            mayank_values = _mayank_feature_values(
+                orig_cost, rev_cost, exp, progress, agency, start_date,
+                approval_date, end_date, project_id,
+            )
+            mayank_features = (mayank_config.get("features") or list(mayank_values.keys()))
+            mayank_frame = pd.DataFrame([[mayank_values[name] for name in mayank_features]], columns=mayank_features)
+            mayank_probability = float(mayank_model.predict_proba(mayank_frame)[0, 1])
+            cost_signal = min(1.0, max(0.0, mayank_values.get("cost_overrun_pct", 0.0) * 5.0))
+            spend_signal = min(1.0, max(0.0, mayank_values.get("progress_spend_divergence", 0.0) / 50.0))
+            cost_overrun_prob = round(min(0.95, max(0.02, (
+                (mayank_probability * 0.50) + (cost_signal * 0.35) + (spend_signal * 0.15)
+            ))), 2)
+
+            overdue_signal = float(mayank_values.get("is_overdue", 0))
+            velocity_signal = min(1.0, max(0.0, mayank_values.get("velocity_gap", 0.0) / 10.0))
+            schedule_signal = min(1.0, max(0.0, mayank_values.get("schedule_delay_months", 0.0) / 12.0))
+            time_delay_prob = round(min(0.95, max(0.05, (
+                (mayank_probability * 0.50) + (overdue_signal * 0.25) +
+                (velocity_signal * 0.15) + (schedule_signal * 0.10)
+            ))), 2)
+        except Exception as exc:
+            logging.warning(f"ML-MAYANK inference failed: {exc}. Using legacy blended risk.")
+
+    # ML-MAYANK is the primary risk classifier; legacy models retain cost/delay metrics.
+    raw_risk = (mayank_probability * 100) if mayank_probability is not None else ((cost_overrun_prob * 55) + (time_delay_prob * 45))
     risk_score = round(min(98.0, max(8.0, raw_risk)), 1)
 
-    risk_level = "High" if risk_score >= 70 else ("Medium" if risk_score >= 45 else "Low")
+    mayank_threshold = float((mayank_config or {}).get("operational_decision_threshold", 0.55))
+    risk_level = "High" if (mayank_probability is not None and mayank_probability >= mayank_threshold) or risk_score >= 70 else ("Medium" if risk_score >= 45 else "Low")
     risk_badge = "CRITICAL RISK" if total_delay_months > 24 else ("HIGH RISK" if total_delay_months > 12 else "ON TRACK")
 
     # Projected additional overrun in ₹ Cr
@@ -702,11 +820,9 @@ def run_real_ml_prediction(
         "Low": "Project progressing within permissible variance tolerance. Maintain standard MoSPI monthly reporting cycle.",
     }
 
-    model_source = "xgboost_pkl"
-    if not cost_model_used and not delay_model_used:
+    model_source = "ml_mayank_only" if mayank_probability is not None else "formula_fallback"
+    if mayank_probability is None and not cost_model_used and not delay_model_used:
         model_source = "formula_fallback"
-    elif not cost_model_used or not delay_model_used:
-        model_source = "partial_xgboost"
 
     return MLPredictionResult(
         risk_score=risk_score,
@@ -801,10 +917,13 @@ def calculate_ml_prediction(
     state: str = "Maharashtra",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    project_id: Optional[str] = None,
+    approval_date: Optional[str] = None,
+    agency: Optional[str] = None,
 ) -> MLPredictionResult:
     return run_real_ml_prediction(
         orig_cost, rev_cost, exp, progress, sector,
-        ministry, state, start_date, end_date,
+        ministry, state, start_date, end_date, project_id, approval_date, agency,
     )
 
 
@@ -1232,8 +1351,7 @@ initialize_database()
 @app.get("/", tags=["Health"])
 async def root():
     models_status = {
-        "cost_overrun_model": "loaded" if cost_model is not None else "unavailable",
-        "delay_model": "loaded" if delay_model is not None else "unavailable",
+        "ml_mayank_risk_model": "loaded" if mayank_model is not None else "unavailable",
         "ml_packages": "available" if ML_AVAILABLE else "not installed",
     }
     return {
@@ -1967,6 +2085,9 @@ async def update_project_status(
                 state=row["location"] or "Maharashtra",
                 start_date=row["start_date"],
                 end_date=end_d,
+                project_id=project_id,
+                approval_date=row["approval_date"],
+                agency=row["agency"],
             )
             fields.append("risk_score = ?")
             values.append(ml_pred.risk_score)
@@ -2050,6 +2171,8 @@ async def create_project(data: CreateProjectInput, _user: sqlite3.Row = Depends(
     prediction = calculate_ml_prediction(
         data.original_cost, data.revised_cost, expenditure, progress,
         data.sector, ministry, state, data.start_date, data.expected_end_date,
+        approval_date=data.approval_date,
+        agency=data.agency,
     )
     status = (
         "At Risk" if prediction.risk_score > 70
@@ -2266,6 +2389,9 @@ async def repredict_project(
             state=state,
             start_date=start_date,
             end_date=end_date,
+            project_id=project_id,
+            approval_date=row["approval_date"],
+            agency=row["agency"],
         )
 
         new_status = (
@@ -2328,6 +2454,9 @@ async def refresh_all_predictions(
                     state=row["location"] or "Maharashtra",
                     start_date=row["start_date"],
                     end_date=row["expected_end_date"],
+                    project_id=row["id"],
+                    approval_date=row["approval_date"],
+                    agency=row["agency"],
                 )
 
                 new_status = (
@@ -2408,6 +2537,9 @@ async def repredict_inspector_assigned_projects(
                     state=row["location"] or "Maharashtra",
                     start_date=row["start_date"],
                     end_date=row["revised_completion_date"] or row["expected_end_date"],
+                    project_id=row["id"],
+                    approval_date=row["approval_date"],
+                    agency=row["agency"],
                 )
                 new_status = (
                     "At Risk" if prediction.risk_score > 70
@@ -2487,15 +2619,12 @@ async def get_model_status():
     """Returns which ML models are loaded and available."""
     return {
         "ml_packages_available": ML_AVAILABLE,
-        "cost_overrun_model": {
-            "path": str(COST_MODEL_PATH),
-            "loaded": cost_model is not None,
-            "file_exists": COST_MODEL_PATH.exists(),
-        },
-        "delay_model": {
-            "path": str(DELAY_MODEL_PATH),
-            "loaded": delay_model is not None,
-            "file_exists": DELAY_MODEL_PATH.exists(),
+        "ml_mayank_risk_model": {
+            "path": str(MAYANK_MODEL_PATH),
+            "loaded": mayank_model is not None,
+            "file_exists": MAYANK_MODEL_PATH.exists(),
+            "features": (mayank_config or {}).get("features", []),
+            "threshold": (mayank_config or {}).get("operational_decision_threshold"),
         },
     }
 

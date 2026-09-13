@@ -51,7 +51,7 @@ export function MLResultPanel({ result, onClose }) {
     <div className="ml-result-panel">
       <div className="ml-result-header">
         <span className="ml-result-title"><Brain size={15} /> ML Prediction Results</span>
-        <span className="ml-source-badge">{result.model_source === 'xgboost_pkl' ? '⚡ XGBoost Pipeline' : result.model_source === 'partial_xgboost' ? '⚡ Partial XGBoost' : '📐 Formula Fallback'}</span>
+        <span className="ml-source-badge">{result.model_source === 'ml_mayank_only' ? '⚡ ML-MAYANK' : result.model_source === 'xgboost_pkl' ? '⚡ XGBoost Pipeline' : result.model_source === 'partial_xgboost' ? '⚡ Partial XGBoost' : '📐 Formula Fallback'}</span>
       </div>
       <div className="ml-result-kpis">
         <div className="ml-result-kpi" style={{ background: riskBg, border: `1px solid ${riskColor}22` }}>
