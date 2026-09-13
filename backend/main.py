@@ -205,8 +205,8 @@ class UserItem(BaseModel):
 class NotificationItem(BaseModel):
     id: int
     user_id: int
-    project_id: str
-    project_name: str
+    project_id: Optional[str] = None
+    project_name: Optional[str] = None
     message: str
     alert_type: str
     created_at: str
@@ -1229,7 +1229,7 @@ def initialize_database() -> None:
             CREATE TABLE IF NOT EXISTS notifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
-                project_id TEXT NOT NULL,
+                project_id TEXT,
                 message TEXT NOT NULL,
                 alert_type TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1334,6 +1334,38 @@ def initialize_database() -> None:
                 logging.info(f"Migration: added column {col} to {table}")
             except Exception:
                 pass  # Column already exists
+
+        notification_columns = {
+            row[1]: row for row in connection.execute("PRAGMA table_info(notifications)").fetchall()
+        }
+        if notification_columns.get("project_id", (None, None, None, 0))[3]:
+            connection.execute("ALTER TABLE notifications RENAME TO notifications_legacy")
+            connection.execute(
+                """
+                CREATE TABLE notifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    project_id TEXT,
+                    message TEXT NOT NULL,
+                    alert_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    read_at TEXT,
+                    UNIQUE(user_id, project_id, alert_type),
+                    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO notifications (id, user_id, project_id, message, alert_type, created_at, read_at)
+                SELECT id, user_id, project_id, message, alert_type, created_at, read_at
+                FROM notifications_legacy
+                """
+            )
+            connection.execute("DROP TABLE notifications_legacy")
+            connection.commit()
+            logging.info("Migration: made notifications.project_id nullable")
 
         # Set default assigned inspector for existing projects where NULL or empty
         try:
@@ -1677,10 +1709,10 @@ async def list_notifications(user: sqlite3.Row = Depends(get_current_user)):
     with closing(get_connection()) as connection:
         rows = connection.execute(
             """
-            SELECT n.id, n.user_id, n.project_id, p.name AS project_name,
+            SELECT n.id, n.user_id, n.project_id, COALESCE(p.name, 'Portal Update') AS project_name,
                    n.message, n.alert_type, n.created_at, n.read_at
             FROM notifications n
-            JOIN projects p ON p.id = n.project_id
+            LEFT JOIN projects p ON p.id = n.project_id
             WHERE n.user_id = ?
             ORDER BY n.created_at DESC, n.id DESC
             LIMIT 100
@@ -1703,9 +1735,10 @@ async def mark_notification_read(
         connection.commit()
         row = connection.execute(
             """
-            SELECT n.id, n.user_id, n.project_id, p.name AS project_name,
+            SELECT n.id, n.user_id, n.project_id, COALESCE(p.name, 'Portal Update') AS project_name,
                    n.message, n.alert_type, n.created_at, n.read_at
-            FROM notifications n JOIN projects p ON p.id = n.project_id
+            FROM notifications n
+            LEFT JOIN projects p ON p.id = n.project_id
             WHERE n.id = ? AND n.user_id = ?
             """,
             (notification_id, user["id"]),
@@ -2628,6 +2661,26 @@ async def get_model_status():
         },
     }
 
+@app.get("/api/v1/users/request-admin/status", tags=["Users"])
+async def get_admin_access_status(user: sqlite3.Row = Depends(get_current_user)):
+    if user["role"] != "user":
+        return {"status": "not_applicable"}
+
+    with closing(get_connection()) as connection:
+        latest = connection.execute(
+            """
+            SELECT status
+            FROM access_requests
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (user["id"],),
+        ).fetchone()
+
+    return {"status": latest["status"] if latest else "none"}
+
+
 @app.post("/api/v1/users/request-admin", tags=["Users"])
 async def request_admin_access(user: sqlite3.Row = Depends(get_current_user)):
     affiliation = normalize_affiliation(dict(user).get("affiliation"))
@@ -2635,15 +2688,15 @@ async def request_admin_access(user: sqlite3.Row = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Only Viewer accounts can request Admin access.")
     if affiliation not in ["Ministry of Central Govt", "Ministry of State Govt"]:
         raise HTTPException(status_code=403, detail="Only Ministry personnel can request Admin access.")
-    
+
     with closing(get_connection()) as connection:
         existing = connection.execute("SELECT id FROM access_requests WHERE user_id = ? AND status = 'pending'", (user["id"],)).fetchone()
         if existing:
             raise HTTPException(status_code=400, detail="You already have a pending admin access request.")
-        
+
         connection.execute("INSERT INTO access_requests (user_id) VALUES (?)", (user["id"],))
         connection.commit()
-    
+
     return {"message": "Admin access request submitted successfully."}
 
 @app.get("/api/v1/admin/access-requests", response_model=List[AccessRequestResponse], tags=["Admin"])
@@ -2686,14 +2739,32 @@ async def approve_access_request(request_id: int, user: sqlite3.Row = Depends(re
 @app.post("/api/v1/admin/access-requests/{request_id}/reject", tags=["Admin"])
 async def reject_access_request(request_id: int, user: sqlite3.Row = Depends(require_role("admin"))):
     with closing(get_connection()) as connection:
-        req = connection.execute("SELECT status FROM access_requests WHERE id = ?", (request_id,)).fetchone()
+        req = connection.execute(
+            """
+            SELECT a.user_id, a.status, u.name AS user_name, u.affiliation
+            FROM access_requests a
+            JOIN users u ON u.id = a.user_id
+            WHERE a.id = ?
+            """,
+            (request_id,),
+        ).fetchone()
         if not req:
             raise HTTPException(status_code=404, detail="Request not found.")
         if req["status"] != "pending":
             raise HTTPException(status_code=400, detail=f"Request is already {req['status']}.")
-        
-        connection.execute("UPDATE access_requests SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?", (user["id"], request_id))
+
+        connection.execute(
+            "UPDATE access_requests SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?",
+            (user["id"], request_id),
+        )
+        connection.execute(
+            "INSERT INTO notifications (user_id, project_id, message, alert_type) VALUES (?, NULL, ?, 'ACCESS_REQUEST')",
+            (
+                req["user_id"],
+                f"Your admin access request for {req['affiliation']} was rejected by {user['name']}. Please contact the administrator for more information.",
+            ),
+        )
         connection.commit()
-    
+
     return {"message": "Request rejected."}
 

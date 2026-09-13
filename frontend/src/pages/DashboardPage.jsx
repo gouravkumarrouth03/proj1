@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { IndianRupee, FolderKanban, ShieldAlert, TrendingUp, RefreshCw, AlertTriangle } from 'lucide-react';
+import { IndianRupee, FolderKanban, ShieldAlert, TrendingUp, RefreshCw, AlertTriangle, X } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import RiskAlerts from '../components/RiskAlerts';
 import ProjectTable from '../components/ProjectTable';
 import AIPredictionWidget from '../components/AIPredictionWidget';
-import { API_BASE, authHeaders, requestAdminAccess } from '../services/api';
+import { API_BASE, authHeaders, requestAdminAccess, fetchNotifications, fetchAdminAccessStatus } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import './DashboardPage.css';
 
@@ -13,6 +13,8 @@ export default function DashboardPage() {
   const [overview, setOverview] = useState(null);
   const [projects, setProjects] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [accessStatus, setAccessStatus] = useState(null);
+  const [requestState, setRequestState] = useState('none');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -36,6 +38,32 @@ export default function DashboardPage() {
     fetchData();
   }, [user]);
 
+  useEffect(() => {
+    if (!user || !isMinistryUser(user)) return;
+    let active = true;
+
+    Promise.all([
+      fetchNotifications(user),
+      fetchAdminAccessStatus(user),
+    ])
+      .then(([items, statusRes]) => {
+        if (!active) return;
+        const latestAccessNotice = [...items]
+          .filter(item => item.alert_type === 'ACCESS_REQUEST')
+          .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+        setAccessStatus(latestAccessNotice || null);
+        setRequestState(statusRes.status || 'none');
+      })
+      .catch(() => {
+        if (active) {
+          setAccessStatus(null);
+          setRequestState('none');
+        }
+      });
+
+    return () => { active = false; };
+  }, [user]);
+
   const formatCrore = (val) => {
     if (val === null || val === undefined || isNaN(val)) return '—';
     if (val >= 100000) {
@@ -51,10 +79,19 @@ export default function DashboardPage() {
     : '0.0';
 
   const isMinistry = user?.affiliation === 'Ministry of Central Govt' || user?.affiliation === 'Ministry of State Govt';
+  const isMinistryUser = (currentUser) =>
+    currentUser?.affiliation === 'Ministry of Central Govt' || currentUser?.affiliation === 'Ministry of State Govt';
+
+  useEffect(() => {
+    if (accessStatus && accessStatus.message && accessStatus.message.toLowerCase().includes('rejected')) {
+      window.alert('Access denied: Your admin access request was rejected.');
+    }
+  }, [accessStatus]);
 
   const handleRequestAccess = async () => {
     try {
       await requestAdminAccess(user);
+      setRequestState('pending');
       alert('Admin access request submitted successfully.');
     } catch (err) {
       alert(err.message);
@@ -63,6 +100,44 @@ export default function DashboardPage() {
 
   return (
     <div className="page-container">
+      {accessStatus && accessStatus.message && accessStatus.message.toLowerCase().includes('rejected') && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          background: '#fef2f2',
+          border: '1px solid #fecaca',
+          borderRadius: '10px',
+          color: '#991b1b',
+          padding: '12px 14px',
+          marginBottom: '18px',
+          fontSize: '0.88rem',
+          fontWeight: 600,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AlertTriangle size={16} />
+            <span>{accessStatus.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setAccessStatus(null)}
+            style={{
+              border: 'none',
+              background: 'transparent',
+              color: '#991b1b',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+            }}
+            aria-label="Dismiss access status"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
       <div className="page-header">
         <div>
           <div className="page-title-row">
@@ -81,10 +156,11 @@ export default function DashboardPage() {
             </div>
             {user?.role !== 'admin' && isMinistry && (
               <button 
-                onClick={handleRequestAccess} 
-                style={{ padding: '6px 12px', background: '#0a3871', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '0.85rem' }}
+                onClick={handleRequestAccess}
+                disabled={requestState === 'pending'}
+                style={{ padding: '6px 12px', background: requestState === 'pending' ? '#cbd5e1' : requestState === 'rejected' ? '#b91c1c' : '#0a3871', color: requestState === 'pending' ? '#475569' : 'white', border: 'none', borderRadius: '4px', cursor: requestState === 'pending' ? 'not-allowed' : 'pointer', fontSize: '0.85rem' }}
               >
-                Request Admin Access
+                {requestState === 'pending' ? 'Approval Pending' : requestState === 'rejected' ? 'Admin Request Rejected' : 'Request Admin Access'}
               </button>
             )}
           </div>

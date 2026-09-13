@@ -412,6 +412,89 @@
 .dossier-row span { font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
 .dossier-row strong { font-size: 0.85rem; color: #111827; word-break: break-word; }
 
+.dossier-analytics {
+  margin-top: 22px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 18px;
+}
+
+.dossier-analytics-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1d4ed8;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.dossier-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.dossier-chart-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 12px 8px;
+}
+
+.dossier-chart-card--wide {
+  grid-column: 1 / -1;
+}
+
+.dossier-chart-card h4 {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1f2937;
+}
+
+.dossier-chart-box {
+  width: 100%;
+  height: 180px;
+}
+
+.dossier-chart-box--pie {
+  position: relative;
+  height: 200px;
+}
+
+.dossier-pie-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.dossier-pie-center strong {
+  font-size: 1.15rem;
+  color: #111827;
+}
+
+.dossier-pie-center span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+}
+
+@media (max-width: 640px) {
+  .dossier-analytics-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── ML Modal Variant ───────────────────────────── */
 .modal-box--ml {
   width: 520px;

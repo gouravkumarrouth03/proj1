@@ -49,7 +49,7 @@ export default function Header({ onRefresh, loading }) {
   }, []);
 
   useEffect(() => {
-    if (!user || user.role === 'user') return undefined;
+    if (!user) return undefined;
     let active = true;
     const loadNotifications = () => fetchNotifications(user).then(items => {
       if (active) setNotifications(items);
@@ -62,10 +62,18 @@ export default function Header({ onRefresh, loading }) {
     };
     loadNotifications();
     loadAccessRequests();
-    const timer = setInterval(loadNotifications, 30000);
+    const timer = setInterval(loadNotifications, 5000);
     const requestTimer = setInterval(loadAccessRequests, 30000);
     return () => { active = false; clearInterval(timer); clearInterval(requestTimer); };
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !showNotifications) return undefined;
+    fetchNotifications(user)
+      .then(items => setNotifications(items))
+      .catch(() => {});
+    return undefined;
+  }, [user, showNotifications]);
 
   useEffect(() => {
     if (user?.must_change_password) setShowPasswordDialog(true);
@@ -91,7 +99,7 @@ export default function Header({ onRefresh, loading }) {
     }
   };
 
-  const unreadCount = notifications.filter(item => !item.read_at).length + accessRequests.length;
+  const unreadCount = notifications.filter(item => !item.read_at).length + (user?.role === 'admin' ? accessRequests.length : 0);
 
   const resolveAccessRequest = async (requestId, action) => {
     try {
@@ -108,8 +116,10 @@ export default function Header({ onRefresh, loading }) {
       await markNotificationRead(notification.id, user).catch(() => {});
       setNotifications(prev => prev.map(item => item.id === notification.id ? { ...item, read_at: new Date().toISOString() } : item));
     }
-    window.sessionStorage.setItem('mospi.notificationProjectId', notification.project_id);
-    window.dispatchEvent(new CustomEvent('open-project-dossier', { detail: notification.project_id }));
+    if (notification.project_id) {
+      window.sessionStorage.setItem('mospi.notificationProjectId', notification.project_id);
+      window.dispatchEvent(new CustomEvent('open-project-dossier', { detail: notification.project_id }));
+    }
     setShowNotifications(false);
   };
 
@@ -229,7 +239,7 @@ export default function Header({ onRefresh, loading }) {
             <RefreshCw size={15} />
             <span className="refresh-text">{t.refreshBtn}</span>
           </button>
-          {user && user.role !== 'user' && (
+          {user && (
             <div className="notification-wrap">
               <button className="notification-btn" type="button" onClick={() => setShowNotifications(value => !value)} title="Notifications">
                 <Bell size={16} />
@@ -238,7 +248,7 @@ export default function Header({ onRefresh, loading }) {
               {showNotifications && (
                 <div className="notification-panel">
                   <div className="notification-panel-header"><strong>Notifications</strong><button type="button" onClick={() => setShowNotifications(false)}><X size={14} /></button></div>
-                  {accessRequests.length > 0 && (
+                  {user.role === 'admin' && accessRequests.length > 0 && (
                     <div style={{ padding: '10px 12px', borderBottom: '1px solid #e2e8f0', background: '#fffbeb' }}>
                       <strong style={{ display: 'block', color: '#92400e', fontSize: '0.8rem', marginBottom: '8px' }}>Admin Access Requests</strong>
                       {accessRequests.map(request => (
@@ -255,11 +265,11 @@ export default function Header({ onRefresh, loading }) {
                       ))}
                     </div>
                   )}
-                  {notifications.length === 0 && accessRequests.length === 0 && <div className="notification-empty">No notifications</div>}
+                  {notifications.length === 0 && (user.role !== 'admin' || accessRequests.length === 0) && <div className="notification-empty">No notifications</div>}
                   {notifications.map(notification => (
                     <button key={notification.id} type="button" className={`notification-item ${notification.read_at ? 'read' : 'unread'}`} onClick={() => handleNotificationClick(notification)}>
                       <span>{notification.message}</span>
-                      <small>{notification.project_name} · {new Date(notification.created_at).toLocaleString('en-IN')}</small>
+                      <small>{notification.project_name || 'Portal update'} · {new Date(notification.created_at).toLocaleString('en-IN')}</small>
                     </button>
                   ))}
                 </div>

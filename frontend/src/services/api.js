@@ -338,6 +338,17 @@ export async function repredictAssignedProjects(user) {
   return res.json();
 }
 
+export async function fetchAdminAccessStatus(user) {
+  const res = await fetch(`${API_BASE}/api/v1/users/request-admin/status`, {
+    headers: authHeaders(user),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to fetch access request status');
+  }
+  return res.json();
+}
+
 export async function requestAdminAccess(user) {
   const res = await fetch(`${API_BASE}/api/v1/users/request-admin`, {
     method: 'POST',

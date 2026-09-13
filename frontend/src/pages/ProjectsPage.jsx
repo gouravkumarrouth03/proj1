@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Search, Filter, Download, Eye, Trash2, Database, ClipboardList, UserPlus, X, CheckCircle, AlertCircle, MapPin, Brain, Zap, TrendingUp, Clock, ShieldAlert, MessageSquare, ImagePlus, Send, History } from 'lucide-react';
-import { API_BASE, authHeaders, deleteProject, updateProjectStatus, assignProjectInspector, fetchInspectors, repredictProject, repredictAssignedProjects, fetchProjectComments, addProjectComment, requestAdminAccess, fetchProjectHistory } from '../services/api';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
+import { API_BASE, authHeaders, deleteProject, updateProjectStatus, assignProjectInspector, fetchInspectors, repredictProject, repredictAssignedProjects, fetchProjectComments, addProjectComment, requestAdminAccess, fetchProjectHistory, fetchAdminAccessStatus } from '../services/api';
 import { useAuth, ROLE_CONFIG } from '../context/AuthContext';
 import './ProjectsPage.css';
 
@@ -51,7 +52,7 @@ export function MLResultPanel({ result, onClose }) {
     <div className="ml-result-panel">
       <div className="ml-result-header">
         <span className="ml-result-title"><Brain size={15} /> ML Prediction Results</span>
-        <span className="ml-source-badge">{result.model_source === 'ml_mayank_only' ? '⚡ ML-MAYANK' : result.model_source === 'xgboost_pkl' ? '⚡ XGBoost Pipeline' : result.model_source === 'partial_xgboost' ? '⚡ Partial XGBoost' : '📐 Formula Fallback'}</span>
+        <span className="ml-source-badge">{result.model_source === 'ml_mayank_only' ? '⚡ ML Risk Engine' : result.model_source === 'xgboost_pkl' ? '⚡ XGBoost Pipeline' : result.model_source === 'partial_xgboost' ? '⚡ Partial XGBoost' : '📐 Formula Fallback'}</span>
       </div>
       <div className="ml-result-kpis">
         <div className="ml-result-kpi" style={{ background: riskBg, border: `1px solid ${riskColor}22` }}>
@@ -423,6 +424,29 @@ function DossierModal({ project, user, onClose }) {
     }
   };
 
+  const originalCost = Number(project.original_cost) || 0;
+  const revisedCost = Number(project.revised_cost) || originalCost || 0;
+  const expenditure = Number(project.expenditure) || 0;
+  const physicalProgress = Math.min(100, Math.max(0, Number(project.physical_progress) || 0));
+  const riskScore = Math.min(100, Math.max(0, Number(project.risk_score) || 0));
+  const spentShare = revisedCost ? Math.min(100, Math.max(0, (expenditure / revisedCost) * 100)) : 0;
+
+  const costChartData = [
+    { name: 'Original', value: originalCost },
+    { name: 'Revised', value: revisedCost },
+    { name: 'Spent', value: expenditure },
+  ];
+
+  const progressChartData = [
+    { name: 'Progress', value: physicalProgress },
+    { name: 'Risk', value: riskScore },
+  ];
+
+  const utilizationData = [
+    { name: 'Utilized', value: spentShare },
+    { name: 'Balance', value: Math.max(0, 100 - spentShare) },
+  ];
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-box modal-box--wide" onClick={e => e.stopPropagation()}>
@@ -458,6 +482,82 @@ function DossierModal({ project, user, onClose }) {
               <div className="dossier-row dossier-row--full"><span>Description</span><strong>{project.description}</strong></div>
             )}
           </div>
+
+          <section className="dossier-analytics">
+            <div className="dossier-analytics-header">
+              <TrendingUp size={16} />
+              <span>Project Portfolio Analytics</span>
+            </div>
+
+            <div className="dossier-analytics-grid">
+              <div className="dossier-chart-card">
+                <h4>Cost Snapshot</h4>
+                <div className="dossier-chart-box">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={costChartData} margin={{ top: 10, right: 10, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} />
+                      <YAxis tick={{ fontSize: 11, fill: '#6b7280' }} />
+                      <Tooltip formatter={value => [`₹${Number(value).toLocaleString('en-IN')} Cr`, 'Cost']} />
+                      <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                        {costChartData.map((entry, index) => (
+                          <Cell key={`${entry.name}-${index}`} fill={index === 2 ? '#2563eb' : index === 1 ? '#7c3aed' : '#10b981'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="dossier-chart-card">
+                <h4>Progress vs Risk</h4>
+                <div className="dossier-chart-box">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={progressChartData} margin={{ top: 10, right: 10, left: 0, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" vertical={false} />
+                      <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#6b7280' }} />
+                      <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#6b7280' }} />
+                      <Tooltip formatter={value => [`${value}%`, 'Score']} />
+                      <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                        {progressChartData.map((entry, index) => (
+                          <Cell key={`${entry.name}-${index}`} fill={index === 1 ? '#f59e0b' : '#16a34a'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="dossier-chart-card dossier-chart-card--wide">
+                <h4>Cost Utilization</h4>
+                <div className="dossier-chart-box dossier-chart-box--pie">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={utilizationData}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={52}
+                        outerRadius={74}
+                        paddingAngle={3}
+                        startAngle={90}
+                        endAngle={-270}
+                      >
+                        {[0, 1].map((index) => (
+                          <Cell key={index} fill={index === 0 ? '#2563eb' : '#dbeafe'} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={value => [`${Number(value).toFixed(1)}%`, 'Share']} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="dossier-pie-center">
+                    <strong>{Math.round(spentShare)}%</strong>
+                    <span>Utilized</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
 
           <section className="project-comments-section">
             <div className="project-comments-heading">
@@ -528,14 +628,29 @@ export default function ProjectsPage() {
   const [dossierModal, setDossierModal] = useState(null); // project obj
   const [repredictingAll, setRepredictingAll] = useState(false);
   const [inspectorToast, setInspectorToast] = useState('');
-  const [accessRequestSent, setAccessRequestSent] = useState(false);
+  const [accessRequestState, setAccessRequestState] = useState('none');
+
+  useEffect(() => {
+    if (!user || user.role !== 'user') return;
+    fetchAdminAccessStatus(user)
+      .then(data => setAccessRequestState(data.status || 'none'))
+      .catch(() => setAccessRequestState('none'));
+  }, [user]);
 
   const canRequestAdmin = role === 'user' && ['Ministry of Central Govt', 'Ministry of State Govt'].includes(user?.affiliation);
+  const showPendingAccessState = canRequestAdmin && accessRequestState === 'pending';
+  const showRejectedAccessState = canRequestAdmin && accessRequestState === 'rejected';
+
+  useEffect(() => {
+    if (showRejectedAccessState) {
+      window.alert('Access denied: Your admin access request was rejected.');
+    }
+  }, [showRejectedAccessState]);
 
   const handleRequestAccess = async () => {
     try {
       await requestAdminAccess(user);
-      setAccessRequestSent(true);
+      setAccessRequestState('pending');
       setInspectorToast('Admin access request submitted for review.');
     } catch (err) {
       setInspectorToast(err.message || 'Could not submit admin access request.');
@@ -644,10 +759,30 @@ export default function ProjectsPage() {
       )}
 
       {canRequestAdmin && (
-        <div className="citizen-banner" style={{ background: '#fffbeb', borderColor: '#fde68a', color: '#92400e', justifyContent: 'space-between' }}>
-          <span><strong>Government Viewer</strong> — request Admin approval to manage project records.</span>
-          <button type="button" onClick={handleRequestAccess} disabled={accessRequestSent} style={{ padding: '7px 12px', border: '1px solid #b45309', borderRadius: '4px', background: accessRequestSent ? '#fef3c7' : '#b45309', color: accessRequestSent ? '#92400e' : '#fff', cursor: accessRequestSent ? 'default' : 'pointer', fontWeight: 700 }}>
-            {accessRequestSent ? 'Request Pending' : 'Request Admin Access'}
+        <div className="citizen-banner" style={{ background: showRejectedAccessState ? '#fef2f2' : '#fffbeb', borderColor: showRejectedAccessState ? '#fecaca' : '#fde68a', color: showRejectedAccessState ? '#991b1b' : '#92400e', justifyContent: 'space-between' }}>
+          <span>
+            <strong>{showRejectedAccessState ? 'Admin request rejected' : 'Government Viewer'}</strong>
+            {showRejectedAccessState
+              ? ' — Your last admin access request was rejected. Please review the notification and re-submit if needed.'
+              : showPendingAccessState
+                ? ' — Your admin access request is currently pending approval.'
+                : ' — request Admin approval to manage project records.'}
+          </span>
+          <button
+            type="button"
+            onClick={handleRequestAccess}
+            disabled={showPendingAccessState}
+            style={{
+              padding: '7px 12px',
+              border: '1px solid #b45309',
+              borderRadius: '4px',
+              background: showPendingAccessState ? '#fef3c7' : showRejectedAccessState ? '#b91c1c' : '#b45309',
+              color: showPendingAccessState ? '#92400e' : '#fff',
+              cursor: showPendingAccessState ? 'default' : 'pointer',
+              fontWeight: 700,
+            }}
+          >
+            {showPendingAccessState ? 'Approval Pending' : showRejectedAccessState ? 'Admin Request Rejected' : 'Request Admin Access'}
           </button>
         </div>
       )}

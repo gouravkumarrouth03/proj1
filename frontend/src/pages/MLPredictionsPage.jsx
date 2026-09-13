@@ -107,13 +107,13 @@ export default function MLPredictionsPage() {
               borderRadius: '4px',
               textTransform: 'uppercase'
             }}>
-              ML-MAYANK Risk Engine
+              ML Risk Engine
             </span>
           </div>
           <p className="page-subtitle">
             {role === 'inspector'
-              ? 'Real-time ML-MAYANK risk predictions on inspector-assigned project parameters and revised field milestone data'
-              : 'ML-MAYANK risk scores with legacy cost overrun forecasts and delay estimations across monitored projects'}
+              ? 'Real-time ML risk predictions on inspector-assigned project parameters and revised field milestone data'
+              : 'ML risk scores with cost overrun forecasts and delay estimations across monitored projects'}
           </p>
         </div>
 
