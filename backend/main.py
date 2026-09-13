@@ -339,6 +339,9 @@ class MLPredictionResult(BaseModel):
     risk_level: str
     cost_overrun_prob: float
     time_delay_prob: float
+    raw_risk_score: Optional[float] = None
+    raw_cost_overrun_prob: Optional[float] = None
+    raw_time_delay_prob: Optional[float] = None
     predicted_cost_overrun_cr: float
     predicted_delay_months: int
     top_risk_factors: List[str]
@@ -626,6 +629,124 @@ def _mayank_feature_values(
     return {feature: features.get(feature, 0.0) for feature in (mayank_config or {}).get("features", features.keys())}
 
 
+def calculate_risk_trend_adjustment(
+    history_snapshots: List[dict],
+    current_progress: float,
+    current_completion_date: Optional[str],
+) -> dict:
+    """Calculate a conservative application-side schedule trend adjustment."""
+    snapshots = [snapshot for snapshot in history_snapshots if isinstance(snapshot, dict)]
+    progress_points = []
+    for snapshot in snapshots:
+        recorded_at = snapshot.get("recorded_at")
+        progress = snapshot.get("physical_progress")
+        if not recorded_at or progress is None:
+            continue
+        try:
+            recorded_date = datetime.fromisoformat(str(recorded_at).replace("Z", "+00:00")).replace(tzinfo=None)
+            progress_points.append((recorded_date, float(progress), snapshot.get("revised_completion_date")))
+        except (TypeError, ValueError):
+            continue
+
+    if progress_points:
+        last_date, last_progress, last_completion = progress_points[-1]
+        if abs(last_progress - float(current_progress)) > 1e-9 or last_completion != current_completion_date:
+            progress_points.append((datetime.utcnow(), float(current_progress), current_completion_date))
+    else:
+        progress_points.append((datetime.utcnow(), float(current_progress), current_completion_date))
+
+    velocities = []
+    for previous, current in zip(progress_points, progress_points[1:]):
+        elapsed_months = max((current[0] - previous[0]).days / 30.4375, 1 / 30.4375)
+        velocities.append((current[1] - previous[1]) / elapsed_months)
+
+    declining_velocity = len(velocities) >= 2 and velocities[-1] < velocities[-2]
+    velocity_decline_ratio = 0.0
+    if len(velocities) >= 2 and velocities[0] > 0:
+        velocity_decline_ratio = max(0.0, min(1.0, 1.0 - (velocities[-1] / velocities[0])))
+
+    velocity_penalty = min(4.0, velocity_decline_ratio * 4.0) if declining_velocity else 0.0
+    decline_penalty = 1.5 if declining_velocity else 0.0
+
+    extension_months = 0.0
+    baseline_completion = next((point[2] for point in progress_points if point[2]), None)
+    if baseline_completion and current_completion_date:
+        try:
+            baseline_date = date.fromisoformat(str(baseline_completion)[:10])
+            current_date = date.fromisoformat(str(current_completion_date)[:10])
+            extension_months = max(0.0, (current_date - baseline_date).days / 30.4375)
+        except ValueError:
+            extension_months = 0.0
+
+    extension_penalty = min(4.5, extension_months * 1.5)
+    risk_adjustment = round(min(8.0, velocity_penalty + decline_penalty + extension_penalty), 1)
+    delay_adjustment = round(min(0.10, (risk_adjustment / 100.0 * 0.6) + min(extension_months, 3.0) * 0.01), 2)
+
+    factors = []
+    if declining_velocity:
+        factors.append("Historical progress velocity is declining")
+    if extension_months > 0:
+        factors.append(f"Completion date extended by {extension_months:.1f} months")
+
+    return {
+        "risk_adjustment": risk_adjustment,
+        "delay_adjustment": delay_adjustment,
+        "declining_velocity": declining_velocity,
+        "progress_velocities": velocities,
+        "extension_months": round(extension_months, 1),
+        "factors": factors,
+    }
+
+
+def _load_risk_trend_history(project_id: Optional[str]) -> List[dict]:
+    if not project_id:
+        return []
+    try:
+        with closing(get_connection()) as connection:
+            rows = connection.execute(
+                """
+                SELECT recorded_at, snapshot
+                FROM project_update_history
+                WHERE project_id = ?
+                ORDER BY recorded_at ASC, id ASC
+                """,
+                (project_id,),
+            ).fetchall()
+        return [dict(json.loads(row["snapshot"] or "{}"), recorded_at=row["recorded_at"]) for row in rows]
+    except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _apply_risk_trend_adjustment(
+    prediction: MLPredictionResult,
+    progress: float,
+    completion_date: Optional[str],
+    project_id: Optional[str],
+) -> MLPredictionResult:
+    """Apply history signals after inference while retaining raw model outputs."""
+    raw_risk = prediction.risk_score
+    raw_cost = prediction.cost_overrun_prob
+    raw_delay = prediction.time_delay_prob
+    adjustment = calculate_risk_trend_adjustment(
+        _load_risk_trend_history(project_id), progress, completion_date,
+    )
+    adjusted_risk = round(min(98.0, max(8.0, raw_risk + adjustment["risk_adjustment"])), 1)
+    adjusted_delay = round(min(0.95, max(0.05, raw_delay + adjustment["delay_adjustment"])), 2)
+    factors = [*adjustment["factors"], *prediction.top_risk_factors]
+    risk_level = "High" if adjusted_risk >= 70 else ("Medium" if adjusted_risk >= 45 else "Low")
+    risk_badge = "HIGH RISK" if adjusted_risk >= 70 or adjusted_delay > 0.7 else prediction.risk_badge
+    return prediction.model_copy(update={
+        "risk_score": adjusted_risk,
+        "risk_level": risk_level,
+        "time_delay_prob": adjusted_delay,
+        "raw_risk_score": raw_risk,
+        "raw_cost_overrun_prob": raw_cost,
+        "raw_time_delay_prob": raw_delay,
+        "top_risk_factors": factors[:3],
+        "risk_badge": risk_badge,
+    })
+
+
 def run_real_ml_prediction(
     orig_cost: float,
     rev_cost: float,
@@ -645,7 +766,12 @@ def run_real_ml_prediction(
     Falls back to formula if models are unavailable.
     """
     if not ML_AVAILABLE or mayank_model is None or mayank_config is None:
-        return _formula_fallback(orig_cost, rev_cost, exp, progress, sector)
+        return _apply_risk_trend_adjustment(
+            _formula_fallback(orig_cost, rev_cost, exp, progress, sector),
+            progress,
+            end_date,
+            project_id,
+        )
 
     # ── Derive engineered features ─────────────────────────────────────────
     planned_months = _planned_duration_months(start_date, end_date)
@@ -824,7 +950,7 @@ def run_real_ml_prediction(
     if mayank_probability is None and not cost_model_used and not delay_model_used:
         model_source = "formula_fallback"
 
-    return MLPredictionResult(
+    base_prediction = MLPredictionResult(
         risk_score=risk_score,
         risk_level=risk_level,
         cost_overrun_prob=cost_overrun_prob,
@@ -843,6 +969,7 @@ def run_real_ml_prediction(
         },
         risk_badge=risk_badge,
     )
+    return _apply_risk_trend_adjustment(base_prediction, progress, end_date, project_id)
 
 
 # ── Formula fallback (used when models can't load) ─────────────────────────────
@@ -2131,6 +2258,13 @@ async def update_project_status(
             fields.append("time_delay_prob = ?")
             values.append(ml_pred.time_delay_prob)
             changed_fields.append("time_delay_prob")
+            if data.status is None:
+                fields.append("status = ?")
+                values.append(
+                    "At Risk" if ml_pred.risk_score > 70
+                    else ("Delayed" if ml_pred.time_delay_prob > 0.6 else "Ongoing")
+                )
+                changed_fields.append("status")
 
         if fields:
             values.append(project_id)
@@ -2486,7 +2620,7 @@ async def refresh_all_predictions(
                     ministry=row["ministry"] or "MoRTH",
                     state=row["location"] or "Maharashtra",
                     start_date=row["start_date"],
-                    end_date=row["expected_end_date"],
+                    end_date=row["revised_completion_date"] or row["expected_end_date"],
                     project_id=row["id"],
                     approval_date=row["approval_date"],
                     agency=row["agency"],
