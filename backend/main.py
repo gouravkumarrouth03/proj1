@@ -20,6 +20,7 @@ try:
 except ImportError:
     pass
 from typing import List, Optional
+from typing import List, Optional, Union
 from datetime import datetime, date, timedelta
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
@@ -172,6 +173,7 @@ class AccessRequestResponse(BaseModel):
     user_name: str
     user_email: Optional[str]
     affiliation: str
+    request_type: str = "admin_access"
     status: str
     created_at: str
     resolved_at: Optional[str] = None
@@ -189,6 +191,15 @@ class UserResponse(BaseModel):
     email: Optional[str] = None
     must_change_password: bool = False
     affiliation: str = "Public"
+
+
+class PendingRegistrationResponse(BaseModel):
+    id: int
+    name: str
+    role: str
+    email: Optional[str] = None
+    affiliation: str = "Public"
+    pending_approval: bool = True
 
 
 class UserItem(BaseModel):
@@ -1316,6 +1327,7 @@ def initialize_database() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
+                request_type TEXT NOT NULL DEFAULT 'admin_access',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 resolved_at TEXT,
                 resolved_by INTEGER,
@@ -1445,6 +1457,7 @@ def initialize_database() -> None:
             ("users", "last_seen_at", "TEXT"),
             ("users", "email", "TEXT"),
             ("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0"),
+            ("access_requests", "request_type", "TEXT NOT NULL DEFAULT 'admin_access'"),
             ("projects", "approval_date", "TEXT"),
             ("projects", "revised_completion_date", "TEXT"),
             ("projects", "project_status", "TEXT DEFAULT 'Ongoing'"),
@@ -1538,6 +1551,12 @@ async def login(data: LoginInput):
                         SELECT id, name, role, email, password_hash, must_change_password, affiliation
                         FROM users
                         WHERE (lower(name) = lower(?) OR lower(email) = lower(?))
+                            AND NOT EXISTS (
+                                SELECT 1 FROM access_requests pending_request
+                                WHERE pending_request.user_id = users.id
+                                  AND pending_request.request_type = 'inspector_registration'
+                                  AND pending_request.status != 'approved'
+                            )
                             AND (
                                 role = ?
                                 OR (
@@ -1570,8 +1589,12 @@ async def login(data: LoginInput):
     )
 
 
-@app.post("/api/v1/auth/register", response_model=UserResponse, tags=["Authentication"])
+@app.post("/api/v1/auth/register", response_model=Union[PendingRegistrationResponse, UserResponse], tags=["Authentication"])
 async def register(data: RegisterInput):
+    return await _register_account(data)
+
+
+async def _register_account(data: RegisterInput, allow_inspector_direct: bool = False):
     """
     Register a new administrator, inspector officer, or user account directly in the database.
     """
@@ -1604,13 +1627,23 @@ async def register(data: RegisterInput):
             )
 
         hashed = hash_password(data.password)
+        stored_role = "user" if role == "inspector" and not allow_inspector_direct else role
         cursor = connection.execute(
             "INSERT INTO users (name, role, password_hash, email, affiliation) VALUES (?, ?, ?, ?, ?)",
-            (name, role, hashed, email, affiliation),
+            (name, stored_role, hashed, email, affiliation),
         )
         user_id = cursor.lastrowid
+        if role == "inspector" and not allow_inspector_direct:
+            connection.execute(
+                "INSERT INTO access_requests (user_id, request_type) VALUES (?, 'inspector_registration')",
+                (user_id,),
+            )
         connection.commit()
 
+    if role == "inspector" and not allow_inspector_direct:
+        return PendingRegistrationResponse(
+            id=user_id, name=name, role="inspector", email=email, affiliation=affiliation,
+        )
     return UserResponse(id=user_id, name=name, role=role, email=email, affiliation=affiliation)
 
 
@@ -1673,7 +1706,7 @@ async def list_users(_user: sqlite3.Row = Depends(require_role("admin"))):
 @app.post("/api/v1/users", response_model=UserResponse, tags=["User Management"])
 async def create_user_by_admin(data: RegisterInput, _user: sqlite3.Row = Depends(require_role("admin"))):
     """Admin endpoint to create user/admin accounts in the database."""
-    return await register(data)
+    return await _register_account(data, allow_inspector_direct=True)
 
 
 @app.post("/api/v1/users/invite-officer", tags=["User Management"])
@@ -2837,7 +2870,7 @@ async def request_admin_access(user: sqlite3.Row = Depends(get_current_user)):
 async def list_access_requests(_user: sqlite3.Row = Depends(require_role("admin"))):
     with closing(get_connection()) as connection:
         rows = connection.execute('''
-            SELECT a.id, a.user_id, a.status, a.created_at, a.resolved_at, a.resolved_by,
+            SELECT a.id, a.user_id, a.status, a.request_type, a.created_at, a.resolved_at, a.resolved_by,
                    u.name as user_name, u.email as user_email, u.affiliation
             FROM access_requests a
             JOIN users u ON a.user_id = u.id
@@ -2851,7 +2884,7 @@ async def approve_access_request(request_id: int, user: sqlite3.Row = Depends(re
     with closing(get_connection()) as connection:
         req = connection.execute(
             """
-            SELECT a.user_id, a.status, u.role, u.affiliation
+            SELECT a.user_id, a.status, a.request_type, u.role, u.affiliation
             FROM access_requests a JOIN users u ON u.id = a.user_id
             WHERE a.id = ?
             """,
@@ -2861,21 +2894,30 @@ async def approve_access_request(request_id: int, user: sqlite3.Row = Depends(re
             raise HTTPException(status_code=404, detail="Request not found.")
         if req["status"] != "pending":
             raise HTTPException(status_code=400, detail=f"Request is already {req['status']}.")
-        if req["role"] != "user" or normalize_affiliation(req["affiliation"]) not in ["Ministry of Central Govt", "Ministry of State Govt"]:
-            raise HTTPException(status_code=400, detail="Only eligible Viewer requests can be approved.")
-        
+        if req["request_type"] == "inspector_registration":
+            if req["role"] != "user":
+                raise HTTPException(status_code=400, detail="Inspector registration request is no longer pending.")
+            connection.execute("UPDATE users SET role = 'inspector' WHERE id = ?", (req["user_id"],))
+        else:
+            if req["role"] != "user" or normalize_affiliation(req["affiliation"]) not in ["Ministry of Central Govt", "Ministry of State Govt"]:
+                raise HTTPException(status_code=400, detail="Only eligible Viewer requests can be approved.")
         connection.execute("UPDATE access_requests SET status = 'approved', resolved_at = CURRENT_TIMESTAMP, resolved_by = ? WHERE id = ?", (user["id"], request_id))
-        connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (req["user_id"],))
+        if req["request_type"] != "inspector_registration":
+            connection.execute("UPDATE users SET role = 'admin' WHERE id = ?", (req["user_id"],))
         connection.commit()
     
-    return {"message": "Request approved. User is now an admin."}
+    return {
+        "message": "Request approved. Inspector Officer is now registered."
+        if req["request_type"] == "inspector_registration"
+        else "Request approved. User is now an admin."
+    }
 
 @app.post("/api/v1/admin/access-requests/{request_id}/reject", tags=["Admin"])
 async def reject_access_request(request_id: int, user: sqlite3.Row = Depends(require_role("admin"))):
     with closing(get_connection()) as connection:
         req = connection.execute(
             """
-            SELECT a.user_id, a.status, u.name AS user_name, u.affiliation
+            SELECT a.user_id, a.status, a.request_type, u.name AS user_name, u.affiliation
             FROM access_requests a
             JOIN users u ON u.id = a.user_id
             WHERE a.id = ?
@@ -2895,7 +2937,11 @@ async def reject_access_request(request_id: int, user: sqlite3.Row = Depends(req
             "INSERT INTO notifications (user_id, project_id, message, alert_type) VALUES (?, NULL, ?, 'ACCESS_REQUEST')",
             (
                 req["user_id"],
-                f"Your admin access request for {req['affiliation']} was rejected by {user['name']}. Please contact the administrator for more information.",
+                (
+                    f"Your Inspector Officer registration request was rejected by {user['name']}."
+                    if req["request_type"] == "inspector_registration"
+                    else f"Your admin access request for {req['affiliation']} was rejected by {user['name']}."
+                ) + " Please contact the administrator for more information.",
             ),
         )
         connection.commit()

@@ -72,6 +72,7 @@ export function AuthProvider({ children }) {
 
   const register = async (role, name, password, affiliation = 'Public') => {
     const newUser = await registerUser({ role, name, password, affiliation });
+    if (newUser.pending_approval) return newUser;
     setUser(newUser);
     window.localStorage.setItem('mospi.authenticatedUser', JSON.stringify(newUser));
     return newUser;

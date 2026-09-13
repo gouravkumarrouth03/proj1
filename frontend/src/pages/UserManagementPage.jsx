@@ -318,7 +318,7 @@ export default function UserManagementPage() {
         {/* Access Requests Table */}
         <div className="glass-panel user-table-card" style={{ gridColumn: '1 / -1', marginTop: '20px' }}>
           <h3 className="panel-h" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>Ministry Admin Access Requests</span>
+            <span>Pending Access &amp; Inspector Registration Requests</span>
             <span style={{ fontSize: '0.8rem', fontWeight: 500, color: '#64748b' }}>{accessRequests.length} Total</span>
           </h3>
 
@@ -327,6 +327,7 @@ export default function UserManagementPage() {
               <thead>
                 <tr>
                   <th>User Name</th>
+                  <th>Request Type</th>
                   <th>Affiliation</th>
                   <th>Status</th>
                   <th>Requested Date</th>
@@ -335,9 +336,9 @@ export default function UserManagementPage() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Loading...</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>Loading...</td></tr>
                   ) : accessRequests.length === 0 ? (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>No admin access requests.</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center', padding: '24px', color: '#64748b' }}>No pending access or inspector registration requests.</td></tr>
                 ) : (
                   accessRequests.map(req => (
                     <tr key={req.id}>
@@ -345,13 +346,14 @@ export default function UserManagementPage() {
                         <div className="user-full-name">{req.user_name}</div>
                         <div className="user-meta">{req.user_email}</div>
                       </td>
+                      <td>{req.request_type === 'inspector_registration' ? 'Inspector Registration' : 'Admin Access'}</td>
                       <td>{req.affiliation}</td>
                       <td style={{ textTransform: 'capitalize', color: req.status === 'approved' ? '#15803d' : req.status === 'rejected' ? '#b91c1c' : '#b45309', fontWeight: 700 }}>{req.status}</td>
                       <td>{new Date(req.created_at).toLocaleDateString()}</td>
                       <td style={{ textAlign: 'right', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                         {req.status === 'pending' ? (
                           <>
-                            <button onClick={() => handleApprove(req.id)} style={{ padding: '4px 8px', background: '#16a34a', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Approve</button>
+                            <button onClick={() => handleApprove(req.id)} style={{ padding: '4px 8px', background: '#16a34a', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>{req.request_type === 'inspector_registration' ? 'Register' : 'Approve'}</button>
                             <button onClick={() => handleReject(req.id)} style={{ padding: '4px 8px', background: '#dc2626', color: 'white', borderRadius: '4px', border: 'none', cursor: 'pointer' }}>Reject</button>
                           </>
                         ) : <span style={{ color: '#94a3b8', fontSize: '0.8rem' }}>Resolved</span>}

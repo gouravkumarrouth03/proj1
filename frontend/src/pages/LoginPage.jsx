@@ -131,7 +131,10 @@ export default function LoginPage() {
     setError('');
     try {
       if (mode === 'register') {
-        await register(selectedRole, name.trim(), password, affiliation);
+        const registered = await register(selectedRole, name.trim(), password, affiliation);
+        if (registered.pending_approval) {
+          setError('Inspector Officer registration submitted. An administrator must approve it before you can sign in.');
+        }
       } else {
         await login(selectedRole, name.trim(), password, affiliation);
       }
